@@ -5,7 +5,7 @@ import tempfile
 import json
 import time
 import os
-ICON_PATH = "/Users/skita/Desktop/Ask the Oracle.app/Contents/Resources/AppIcon.icns"
+ICON_PATH = "/Users/skita/Github/ask-the-oracle/Ask the Oracle.app/Contents/Resources/AppIcon.icns"
 
 def set_dock_icon():
     try:
