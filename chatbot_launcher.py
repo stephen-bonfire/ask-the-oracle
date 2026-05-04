@@ -5,7 +5,7 @@ import tempfile
 import json
 import time
 import os
-ICON_PATH = "/Users/skita/Desktop/Consult the Oracles.app/Contents/Resources/AppIcon.icns"
+ICON_PATH = "/Users/skita/Desktop/Ask the Oracle.app/Contents/Resources/AppIcon.icns"
 
 def set_dock_icon():
     try:
@@ -225,11 +225,11 @@ def main():
 
     root = tk.Tk()
     set_dock_icon()  # set after tkinter owns the app
-    root.title("Consult the Oracles")
-    root.resizable(False, False)
+    root.title("Ask the Oracle")
+    root.resizable(True, True)
     root.configure(bg=BG)
 
-    w, h = 500, 190
+    w, h = 500, 230
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2 - 80
     root.geometry(f"{w}x{h}+{x}+{y}")
@@ -238,18 +238,20 @@ def main():
     root.focus_force()
 
     tk.Label(
-        root, text="✦  Consult the Oracles  ✦",
+        root, text="✦  Ask the Oracle  ✦",
         font=("Georgia", 15, "bold"), bg=BG, fg=FG
     ).pack(pady=(14, 6))
 
-    entry = tk.Entry(
-        root, font=("Georgia", 13), width=44,
+    entry = tk.Text(
+        root, font=("Georgia", 13), width=44, height=3,
+        wrap="word",
         bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=FG,
         relief="flat", highlightthickness=1,
         highlightbackground=FG_DIM, highlightcolor=FG,
         selectbackground=SEL_BG, selectforeground=ENTRY_FG,
+        padx=6, pady=6,
     )
-    entry.pack(padx=18, ipady=7)
+    entry.pack(padx=18, fill=tk.BOTH, expand=True)
     entry.focus_set()
 
     # Oracle checkboxes
@@ -277,11 +279,11 @@ def main():
         selectcolor=CB_BG, bd=0,
     ).pack(anchor="w", padx=20, pady=(4, 0))
 
-    entry.bind("<Return>", lambda e: launch(entry.get(), checks, word_limit_var, root))
+    entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, root), "break")[1])
     entry.bind("<Escape>", lambda e: root.destroy())
 
     tk.Label(
-        root, text="⟡  Press Enter to consult  ·  Esc to withdraw  ⟡",
+        root, text="⟡  ⌘↩ to consult  ·  Esc to withdraw  ⟡",
         font=("Georgia", 9, "italic"), bg=BG, fg=FG_DIM,
     ).pack(pady=(6, 10))
 
