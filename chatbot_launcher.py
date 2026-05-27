@@ -50,7 +50,12 @@ def build_js(question, name):
         return f"""
 (function() {{
     var el = document.querySelector("#prompt-textarea");
-    if (!el) {{ return "not found: #prompt-textarea"; }}
+    if (!el) {{
+        var candidates = Array.from(document.querySelectorAll("textarea, div[contenteditable]"));
+        return "not found. candidates: " + candidates.map(function(e) {{
+            return e.tagName + "#" + e.id + "." + e.className.split(" ")[0];
+        }}).join(" | ");
+    }}
     el.focus();
     if (el.tagName === "TEXTAREA") {{
         var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
@@ -64,7 +69,7 @@ def build_js(question, name):
             key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true
         }}));
     }}, 600);
-    return "ok: text inserted, enter scheduled";
+    return "ok: " + el.tagName + " found, text inserted";
 }})();
 """
 
@@ -281,6 +286,79 @@ def main():
 
     entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, root), "break")[1])
     entry.bind("<Escape>", lambda e: root.destroy())
+
+    # macOS-style editing shortcuts (Tk on macOS doesn't wire these up by default for Text)
+    def _del_range(widget, start, end):
+        if widget.compare(start, "!=", end):
+            widget.delete(start, end)
+        return "break"
+
+    def _has_selection(widget):
+        return bool(widget.tag_ranges("sel"))
+
+    # Cmd+Backspace: delete from cursor to start of visible line
+    def _cmd_backspace(e):
+        if _has_selection(e.widget):
+            e.widget.delete("sel.first", "sel.last")
+            return "break"
+        return _del_range(e.widget, "insert linestart", "insert")
+
+    # Option+Backspace: delete previous word
+    def _opt_backspace(e):
+        if _has_selection(e.widget):
+            e.widget.delete("sel.first", "sel.last")
+            return "break"
+        return _del_range(e.widget, "insert-1c wordstart", "insert")
+
+    # Cmd+Delete (forward): delete to end of line
+    def _cmd_delete(e):
+        if _has_selection(e.widget):
+            e.widget.delete("sel.first", "sel.last")
+            return "break"
+        return _del_range(e.widget, "insert", "insert lineend")
+
+    # Option+Delete (forward): delete next word
+    def _opt_delete(e):
+        if _has_selection(e.widget):
+            e.widget.delete("sel.first", "sel.last")
+            return "break"
+        return _del_range(e.widget, "insert", "insert wordend")
+
+    # Cursor movement
+    def _move(widget, index, select):
+        if select:
+            if not _has_selection(widget):
+                widget.tag_add("sel", "insert")
+            widget.mark_set("anchor", widget.index("sel.first") if _has_selection(widget) else "insert")
+        widget.mark_set("insert", index)
+        widget.see("insert")
+        if not select:
+            widget.tag_remove("sel", "1.0", "end")
+        return "break"
+
+    def _cmd_left(e):  return _move(e.widget, "insert linestart", False)
+    def _cmd_right(e): return _move(e.widget, "insert lineend", False)
+    def _opt_left(e):  return _move(e.widget, "insert-1c wordstart", False)
+    def _opt_right(e): return _move(e.widget, "insert wordend", False)
+
+    def _select_all(e):
+        e.widget.tag_add("sel", "1.0", "end-1c")
+        e.widget.mark_set("insert", "end-1c")
+        return "break"
+
+    for seq, fn in [
+        ("<Command-BackSpace>", _cmd_backspace),
+        ("<Option-BackSpace>",  _opt_backspace),
+        ("<Command-Delete>",    _cmd_delete),
+        ("<Option-Delete>",     _opt_delete),
+        ("<Command-Left>",      _cmd_left),
+        ("<Command-Right>",     _cmd_right),
+        ("<Option-Left>",       _opt_left),
+        ("<Option-Right>",      _opt_right),
+        ("<Command-a>",         _select_all),
+        ("<Command-A>",         _select_all),
+    ]:
+        entry.bind(seq, fn)
 
     tk.Label(
         root, text="⟡  ⌘↩ to consult  ·  Esc to withdraw  ⟡",
