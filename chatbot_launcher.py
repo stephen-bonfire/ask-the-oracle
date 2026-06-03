@@ -46,16 +46,13 @@ def save_state(state):
 def build_js(question, name):
     q = question.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
 
-    if name == "ChatGPT":
+    if name == "ChatGPT:insert":
         return f"""
 (function() {{
-    var el = document.querySelector("#prompt-textarea");
-    if (!el) {{
-        var candidates = Array.from(document.querySelectorAll("textarea, div[contenteditable]"));
-        return "not found. candidates: " + candidates.map(function(e) {{
-            return e.tagName + "#" + e.id + "." + e.className.split(" ")[0];
-        }}).join(" | ");
-    }}
+    var el = document.querySelector("#prompt-textarea")
+          || document.querySelector("div[contenteditable='true'].ProseMirror")
+          || document.querySelector("textarea");
+    if (!el) {{ return "not found: chatgpt input"; }}
     el.focus();
     if (el.tagName === "TEXTAREA") {{
         var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
@@ -64,13 +61,37 @@ def build_js(question, name):
     }} else {{
         document.execCommand("insertText", false, `{q}`);
     }}
-    setTimeout(function() {{
-        el.dispatchEvent(new KeyboardEvent("keydown", {{
-            key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true
-        }}));
-    }}, 600);
-    return "ok: " + el.tagName + " found, text inserted";
+    return "ok: text inserted into " + el.tagName;
 }})();
+"""
+
+    if name == "ChatGPT:send":
+        return """
+(function() {
+    // Preferred: explicit send button by testid / aria-label
+    var sendBtn = document.querySelector('button[data-testid="send-button"]')
+               || document.querySelector('button[aria-label="Send prompt"]')
+               || document.querySelector('button[aria-label="Send message"]');
+    if (sendBtn && !sendBtn.disabled) {
+        sendBtn.click();
+        return "clicked send button";
+    }
+    // Fallback: walk up from the editor and grab the last enabled button in the composer
+    var editor = document.querySelector("#prompt-textarea")
+              || document.querySelector("div[contenteditable='true'].ProseMirror");
+    if (!editor) { return "editor not found for fallback send"; }
+    var container = editor.parentElement;
+    while (container && container !== document.body) {
+        var btns = Array.from(container.querySelectorAll("button:not([disabled])"));
+        if (btns.length >= 1) {
+            var btn = btns[btns.length - 1];
+            btn.click();
+            return "clicked fallback: aria=" + (btn.getAttribute("aria-label") || "none");
+        }
+        container = container.parentElement;
+    }
+    return "send button not found";
+})();
 """
 
     if name == "Claude:insert":
@@ -177,15 +198,12 @@ def open_chatbots(question, enabled_bots):
         for bot in enabled_bots:
             print(f"Waiting {bot['wait']}s for {bot['domain']}...")
             time.sleep(bot["wait"])
-            if bot["name"] == "Claude":
-                js = build_js(question, "Claude:insert")
-                inject_into_tab(bot["domain"], js)
+            if bot["name"] in ("Claude", "ChatGPT"):
+                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:insert"))
                 time.sleep(1.0)
-                js2 = build_js(question, "Claude:send")
-                inject_into_tab(bot["domain"], js2)
+                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"))
             else:
-                js = build_js(question, bot["name"])
-                inject_into_tab(bot["domain"], js)
+                inject_into_tab(bot["domain"], build_js(question, bot["name"]))
 
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
