@@ -287,7 +287,7 @@ def main():
 
     # Oracle checkboxes
     check_frame = tk.Frame(root, bg=BG)
-    check_frame.pack(anchor="w", padx=14, pady=(8, 0))
+    check_frame.pack(anchor="w", padx=14, pady=(10, 0))
 
     checks = []
     for bot in CHATBOTS:
@@ -303,12 +303,12 @@ def main():
 
     # Word limit row: checkbox + variable word count
     word_limit_frame = tk.Frame(root, bg=BG)
-    word_limit_frame.pack(anchor="w", padx=20, pady=(4, 0))
+    word_limit_frame.pack(anchor="w", padx=20, pady=(10, 0))
 
     word_limit_var = tk.BooleanVar(value=state.get("word_limit", False))
     tk.Checkbutton(
         word_limit_frame, text="Limit to", variable=word_limit_var,
-        font=("Georgia", 10, "italic"), bg=BG, fg=FG_DIM,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
         activebackground=BG, activeforeground=FG,
         selectcolor=CB_BG, bd=0,
     ).pack(side="left")
@@ -317,7 +317,7 @@ def main():
     word_count_entry = tk.Entry(
         word_limit_frame, textvariable=word_count_var,
         width=5, justify="center",
-        font=("Georgia", 10, "italic"),
+        font=("Georgia", 11, "italic"),
         bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=FG,
         relief="flat", highlightthickness=1,
         highlightbackground=FG_DIM, highlightcolor=FG,
@@ -327,7 +327,7 @@ def main():
 
     tk.Label(
         word_limit_frame, text="words",
-        font=("Georgia", 10, "italic"), bg=BG, fg=FG_DIM,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
     ).pack(side="left")
 
     entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, word_count_var, root), "break")[1])
