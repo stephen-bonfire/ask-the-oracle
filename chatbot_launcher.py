@@ -208,15 +208,21 @@ def open_chatbots(question, enabled_bots):
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, word_limit_var, root):
+def launch(question, checks, word_limit_var, word_count_var, root):
     q = question.strip()
     if not q:
         return
 
     if word_limit_var.get():
+        # Pull the word count; fall back to 100 if user typed garbage
+        raw = word_count_var.get().strip()
+        try:
+            n = max(1, int(raw))
+        except (ValueError, TypeError):
+            n = 100
         if not q.endswith("."):
             q += "."
-        q += " Limit to 100 words."
+        q += f" Limit to {n} words."
 
     enabled_bots = [bot for bot, var in zip(CHATBOTS, checks) if var.get()]
     if not enabled_bots:
@@ -224,11 +230,13 @@ def launch(question, checks, word_limit_var, root):
 
     state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
     state["word_limit"] = word_limit_var.get()
+    state["word_count"] = word_count_var.get()
     save_state(state)
 
     root.withdraw()
     t = threading.Thread(target=open_chatbots, args=(q, enabled_bots))
     t.start()
+
 
     def wait_for_thread():
         if t.is_alive():
@@ -279,7 +287,7 @@ def main():
 
     # Oracle checkboxes
     check_frame = tk.Frame(root, bg=BG)
-    check_frame.pack(anchor="w", padx=14, pady=(8, 0))
+    check_frame.pack(anchor="w", padx=14, pady=(10, 0))
 
     checks = []
     for bot in CHATBOTS:
@@ -293,16 +301,36 @@ def main():
         cb.pack(side="left", padx=6)
         checks.append(var)
 
-    # Word limit checkbox
+    # Word limit row: checkbox + variable word count
+    word_limit_frame = tk.Frame(root, bg=BG)
+    word_limit_frame.pack(anchor="w", padx=20, pady=(10, 0))
+
     word_limit_var = tk.BooleanVar(value=state.get("word_limit", False))
     tk.Checkbutton(
-        root, text="Limit to 100 words", variable=word_limit_var,
-        font=("Georgia", 10, "italic"), bg=BG, fg=FG_DIM,
+        word_limit_frame, text="Limit to", variable=word_limit_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
         activebackground=BG, activeforeground=FG,
         selectcolor=CB_BG, bd=0,
-    ).pack(anchor="w", padx=20, pady=(4, 0))
+    ).pack(side="left")
 
-    entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, root), "break")[1])
+    word_count_var = tk.StringVar(value=str(state.get("word_count", "100")))
+    word_count_entry = tk.Entry(
+        word_limit_frame, textvariable=word_count_var,
+        width=5, justify="center",
+        font=("Georgia", 11, "italic"),
+        bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=FG,
+        relief="flat", highlightthickness=1,
+        highlightbackground=FG_DIM, highlightcolor=FG,
+        selectbackground=SEL_BG, selectforeground=ENTRY_FG,
+    )
+    word_count_entry.pack(side="left", padx=(4, 4))
+
+    tk.Label(
+        word_limit_frame, text="words",
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+    ).pack(side="left")
+
+    entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, word_count_var, root), "break")[1])
     entry.bind("<Escape>", lambda e: root.destroy())
 
     # macOS-style editing shortcuts (Tk on macOS doesn't wire these up by default for Text)
