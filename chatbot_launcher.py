@@ -32,6 +32,11 @@ SEL_BG    = "#2e1f5e"   # selection highlight
 
 STATE_FILE = os.path.expanduser("~/.chatbot_launcher_state.json")
 
+HEALTHCARE_CONTEXT = (
+    "We work for an early-stage startup with the mission of accelerating "
+    "health-tech adoption through exceptional sales intelligence."
+)
+
 def load_state():
     try:
         with open(STATE_FILE) as f:
@@ -208,10 +213,15 @@ def open_chatbots(question, enabled_bots):
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, word_limit_var, word_count_var, root):
+def launch(question, checks, healthcare_var, word_limit_var, word_count_var, root):
     q = question.strip()
     if not q:
         return
+
+    if healthcare_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {HEALTHCARE_CONTEXT}"
 
     if word_limit_var.get():
         # Pull the word count; fall back to 100 if user typed garbage
@@ -229,6 +239,7 @@ def launch(question, checks, word_limit_var, word_count_var, root):
         return
 
     state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
+    state["healthcare"] = healthcare_var.get()
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
     save_state(state)
@@ -301,9 +312,17 @@ def main():
         cb.pack(side="left", padx=6)
         checks.append(var)
 
-    # Word limit row: checkbox + variable word count
+    # Bottom row: healthcare context + word-limit checkbox + variable word count
     word_limit_frame = tk.Frame(root, bg=BG)
     word_limit_frame.pack(anchor="w", padx=20, pady=(10, 0))
+
+    healthcare_var = tk.BooleanVar(value=state.get("healthcare", False))
+    tk.Checkbutton(
+        word_limit_frame, text="Healthcare Startup", variable=healthcare_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
 
     word_limit_var = tk.BooleanVar(value=state.get("word_limit", False))
     tk.Checkbutton(
@@ -330,8 +349,14 @@ def main():
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
     ).pack(side="left")
 
-    entry.bind("<Command-Return>", lambda e: (launch(entry.get("1.0", "end-1c"), checks, word_limit_var, word_count_var, root), "break")[1])
+    def _launch(e=None):
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, word_limit_var, word_count_var, root)
+        return "break"
+
+    # Bind Cmd+Return on root so it works regardless of which widget has focus
+    root.bind_all("<Command-Return>", _launch)
     entry.bind("<Escape>", lambda e: root.destroy())
+    word_count_entry.bind("<Escape>", lambda e: root.destroy())
 
     # macOS-style editing shortcuts (Tk on macOS doesn't wire these up by default for Text)
     def _del_range(widget, start, end):
