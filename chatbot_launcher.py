@@ -36,6 +36,7 @@ HEALTHCARE_CONTEXT = (
     "We work for an early-stage startup with the mission of accelerating "
     "health-tech adoption through exceptional sales intelligence."
 )
+MARKDOWN_CONTEXT = "Export response to a markdown file that can be downloaded."
 
 def load_state():
     try:
@@ -213,7 +214,7 @@ def open_chatbots(question, enabled_bots):
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, word_limit_var, word_count_var, root):
+def launch(question, checks, healthcare_var, markdown_var, word_limit_var, word_count_var, root):
     q = question.strip()
     if not q:
         return
@@ -222,6 +223,11 @@ def launch(question, checks, healthcare_var, word_limit_var, word_count_var, roo
         if not q.endswith("."):
             q += "."
         q += f" {HEALTHCARE_CONTEXT}"
+
+    if markdown_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {MARKDOWN_CONTEXT}"
 
     if word_limit_var.get():
         # Pull the word count; fall back to 100 if user typed garbage
@@ -240,6 +246,7 @@ def launch(question, checks, healthcare_var, word_limit_var, word_count_var, roo
 
     state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
     state["healthcare"] = healthcare_var.get()
+    state["markdown"] = markdown_var.get()
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
     save_state(state)
@@ -324,6 +331,14 @@ def main():
         selectcolor=CB_BG, bd=0,
     ).pack(side="left", padx=(0, 10))
 
+    markdown_var = tk.BooleanVar(value=state.get("markdown", False))
+    tk.Checkbutton(
+        word_limit_frame, text="Markdown", variable=markdown_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
+
     word_limit_var = tk.BooleanVar(value=state.get("word_limit", False))
     tk.Checkbutton(
         word_limit_frame, text="Limit to", variable=word_limit_var,
@@ -350,7 +365,7 @@ def main():
     ).pack(side="left")
 
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, word_limit_var, word_count_var, root)
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, word_limit_var, word_count_var, root)
         return "break"
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
