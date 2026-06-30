@@ -17,9 +17,9 @@ def set_dock_icon():
         pass
 
 CHATBOTS = [
-    {"name": "ChatGPT", "label": "ChatGPT",       "url": "https://chatgpt.com",       "domain": "chatgpt.com",       "wait": 5.0},
-    {"name": "Claude",  "label": "Claude",        "url": "https://claude.ai/new",      "domain": "claude.ai",         "wait": 5.0},
-    {"name": "Gemini",  "label": "Gemini",         "url": "https://gemini.google.com",  "domain": "gemini.google.com", "wait": 6.0},
+    {"name": "ChatGPT", "label": "ChatGPT",       "url": "https://chatgpt.com",       "domain": "chatgpt.com",       "wait": 2.5},
+    {"name": "Claude",  "label": "Claude",        "url": "https://claude.ai/new",      "domain": "claude.ai",         "wait": 2.5},
+    {"name": "Gemini",  "label": "Gemini",         "url": "https://gemini.google.com",  "domain": "gemini.google.com", "wait": 3.0},
 ]
 
 BG        = "#0e0b1a"   # deep space purple
@@ -72,31 +72,35 @@ def build_js(question, name):
 """
 
     if name == "ChatGPT:send":
+        # Send in-page: dispatch a real Enter to the editor, then (if still unsent)
+        # click the explicit send button. No mic-clickable heuristic.
         return """
 (function() {
-    // Preferred: explicit send button by testid / aria-label
-    var sendBtn = document.querySelector('button[data-testid="send-button"]')
+    var el = document.querySelector("#prompt-textarea")
+          || document.querySelector("div[contenteditable='true'].ProseMirror")
+          || document.querySelector("textarea");
+    if (!el) { return "editor not found"; }
+    function txt() { return el.value || el.textContent || ""; }
+    if (!txt().trim()) { return "composer empty, not sending"; }
+    el.focus();
+    if (el.tagName === "TEXTAREA") {
+        el.selectionStart = el.selectionEnd = el.value.length;
+    } else {
+        var sel = window.getSelection(), range = document.createRange();
+        range.selectNodeContents(el); range.collapse(false);
+        sel.removeAllRanges(); sel.addRange(range);
+    }
+    ["keydown", "keypress", "keyup"].forEach(function(t) {
+        el.dispatchEvent(new KeyboardEvent(t, {key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true}));
+    });
+    setTimeout(function() {
+        if (!txt().trim()) { return; }  // already sent
+        var btn = document.querySelector('button[data-testid="send-button"]')
                || document.querySelector('button[aria-label="Send prompt"]')
                || document.querySelector('button[aria-label="Send message"]');
-    if (sendBtn && !sendBtn.disabled) {
-        sendBtn.click();
-        return "clicked send button";
-    }
-    // Fallback: walk up from the editor and grab the last enabled button in the composer
-    var editor = document.querySelector("#prompt-textarea")
-              || document.querySelector("div[contenteditable='true'].ProseMirror");
-    if (!editor) { return "editor not found for fallback send"; }
-    var container = editor.parentElement;
-    while (container && container !== document.body) {
-        var btns = Array.from(container.querySelectorAll("button:not([disabled])"));
-        if (btns.length >= 1) {
-            var btn = btns[btns.length - 1];
-            btn.click();
-            return "clicked fallback: aria=" + (btn.getAttribute("aria-label") || "none");
-        }
-        container = container.parentElement;
-    }
-    return "send button not found";
+        if (btn && !btn.disabled) { btn.click(); }
+    }, 150);
+    return "enter dispatched";
 })();
 """
 
@@ -112,23 +116,37 @@ def build_js(question, name):
 """
 
     if name == "Claude:send":
+        # Send in-page: dispatch a real Enter to the ProseMirror editor, then (if still
+        # unsent) click the last ENABLED button in the composer. Because the composer now
+        # has text, that button is the (enabled) send button, not the mic.
         return """
 (function() {
-    // Walk up from the editor to find its form/composer container, then get the last button
-    var editor = document.querySelector(".ProseMirror");
-    if (!editor) { return "editor not found"; }
-    var container = editor.parentElement;
-    while (container && container !== document.body) {
-        var btns = Array.from(container.querySelectorAll("button:not([disabled])"));
-        if (btns.length >= 2) {
-            // The send button is the last enabled button in the composer
-            var sendBtn = btns[btns.length - 1];
-            sendBtn.click();
-            return "clicked: aria=" + (sendBtn.getAttribute("aria-label") || "none") + " class=" + sendBtn.className.substring(0, 50);
+    var el = document.querySelector(".ProseMirror");
+    if (!el) { return "editor not found"; }
+    function txt() { return el.textContent || ""; }
+    if (!txt().trim()) { return "composer empty, not sending"; }
+    el.focus();
+    var sel = window.getSelection(), range = document.createRange();
+    range.selectNodeContents(el); range.collapse(false);
+    sel.removeAllRanges(); sel.addRange(range);
+    ["keydown", "keypress", "keyup"].forEach(function(t) {
+        el.dispatchEvent(new KeyboardEvent(t, {key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true}));
+    });
+    setTimeout(function() {
+        if (!txt().trim()) { return; }  // already sent
+        var btn = document.querySelector('button[aria-label="Send message"]');
+        if (!(btn && !btn.disabled)) {
+            // Fallback: last enabled button in the composer (= send, since text is present)
+            var c = el.parentElement;
+            while (c && c !== document.body) {
+                var bs = Array.from(c.querySelectorAll("button:not([disabled])"));
+                if (bs.length >= 2) { btn = bs[bs.length - 1]; break; }
+                c = c.parentElement;
+            }
         }
-        container = container.parentElement;
-    }
-    return "send button not found";
+        if (btn && !btn.disabled) { btn.click(); }
+    }, 150);
+    return "enter dispatched";
 })();
 """
 
@@ -150,21 +168,62 @@ def build_js(question, name):
 
     return ""
 
-def inject_into_tab(domain, js_code):
+def check_existing_tab(domain):
+    """Return True if Chrome has any tab open whose URL contains domain."""
+    script = f"""
+tell application "Google Chrome"
+    repeat with w in windows
+        repeat with t in tabs of w
+            if URL of t contains "{domain}" then
+                return "true"
+            end if
+        end repeat
+    end repeat
+    return "false"
+end tell
+"""
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    return r.stdout.strip() == "true"
+
+def navigate_tab_to(domain, new_url):
+    """Navigate the first matching Chrome tab to new_url (fresh chat)."""
+    script = f"""
+tell application "Google Chrome"
+    repeat with w in windows
+        repeat with t in tabs of w
+            if URL of t contains "{domain}" then
+                set URL of t to "{new_url}"
+                return
+            end if
+        end repeat
+    end repeat
+end tell
+"""
+    subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+
+def open_url_in_chrome(url):
+    """Open a URL as a new tab in the existing Chrome window (no new window)."""
+    script = f'tell application "Google Chrome" to open location "{url}"'
+    subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+
+def inject_into_tab(domain, js_code, press_enter=False):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
         f.write(js_code)
         js_path = f.name
 
-    # Step 1: inject text via JavaScript
+    # Step 1: run JavaScript in the matching tab — search ALL windows, not just the front one
     inject_script = f"""
 tell application "Google Chrome"
     set jsCode to do shell script "cat {js_path}"
     set jsResult to ""
-    repeat with t in tabs of front window
-        if URL of t contains "{domain}" then
-            set jsResult to (execute t javascript jsCode) as string
-            exit repeat
-        end if
+    repeat with w in windows
+        repeat with t in tabs of w
+            if URL of t contains "{domain}" then
+                set jsResult to (execute t javascript jsCode) as string
+                exit repeat
+            end if
+        end repeat
+        if jsResult is not "" then exit repeat
     end repeat
     return jsResult
 end tell
@@ -173,7 +232,12 @@ end tell
     os.unlink(js_path)
     print(f"{domain}: {r.stdout.strip() or r.stderr.strip() or 'no output'}")
 
-    # Step 2: bring that tab into focus and press Enter via real keystroke
+    # Step 2 (optional): focus the tab and press Enter via a real keystroke.
+    # Only do this when explicitly asked — pressing Enter on the *insert* step would
+    # send the message prematurely, leaving the send step to misfire on an empty composer.
+    if not press_enter:
+        return
+
     focus_and_enter = f"""
 tell application "Google Chrome"
     activate
@@ -196,20 +260,30 @@ end tell
 
 def open_chatbots(question, enabled_bots):
     try:
-        urls = [bot["url"] for bot in enabled_bots]
-        subprocess.Popen([
-            "open", "-na", "Google Chrome", "--args", "--new-window"
-        ] + urls)
+        # Reuse already-open tabs; only open tabs for bots that aren't open yet.
+        reuse_names = set()
+        for bot in enabled_bots:
+            if check_existing_tab(bot["domain"]):
+                reuse_names.add(bot["name"])
+                navigate_tab_to(bot["domain"], bot["url"])  # reset to a fresh chat
+                print(f"Reusing existing tab for {bot['domain']}")
+            else:
+                open_url_in_chrome(bot["url"])  # new tab in existing window, never a new window
 
         for bot in enabled_bots:
-            print(f"Waiting {bot['wait']}s for {bot['domain']}...")
-            time.sleep(bot["wait"])
+            is_reuse = bot["name"] in reuse_names
+            wait = round(bot["wait"] * 0.6, 1) if is_reuse else bot["wait"]
+            print(f"Waiting {wait}s for {bot['domain']} ({'existing' if is_reuse else 'new'} tab)...")
+            time.sleep(wait)
             if bot["name"] in ("Claude", "ChatGPT"):
-                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:insert"))
-                time.sleep(1.0)
-                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"))
+                # Insert text WITHOUT pressing Enter, then click the send button via JS.
+                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:insert"), press_enter=False)
+                time.sleep(0.5)
+                # Send via JS click (mic-guarded); hardware Enter is a safe backup since the composer has text.
+                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"), press_enter=True)
             else:
-                inject_into_tab(bot["domain"], build_js(question, bot["name"]))
+                # Gemini: its JS inserts + clicks send; keep the hardware-Enter backup.
+                inject_into_tab(bot["domain"], build_js(question, bot["name"]), press_enter=True)
 
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
