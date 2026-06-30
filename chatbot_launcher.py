@@ -22,13 +22,63 @@ CHATBOTS = [
     {"name": "Gemini",  "label": "Gemini",         "url": "https://gemini.google.com",  "domain": "gemini.google.com", "wait": 3.0},
 ]
 
-BG        = "#0e0b1a"   # deep space purple
-FG        = "#d4a843"   # oracle gold
-FG_DIM    = "#7a6030"   # muted gold
-ENTRY_BG  = "#1c1530"   # dark violet
-ENTRY_FG  = "#f0e0b0"   # parchment
-CB_BG     = "#160f28"   # slightly lighter than bg for checkboxes
-SEL_BG    = "#2e1f5e"   # selection highlight
+# Two oracle palettes. Live theme switching remaps widget colors by value
+# (see apply_theme), so the values within each palette must stay distinct.
+THEMES = {
+    "dark": {
+        "BG":       "#0e0b1a",  # deep space purple
+        "FG":       "#d4a843",  # oracle gold
+        "FG_DIM":   "#7a6030",  # muted gold
+        "ENTRY_BG": "#1c1530",  # dark violet
+        "ENTRY_FG": "#f0e0b0",  # parchment
+        "CB_BG":    "#160f28",  # slightly lighter than bg for checkboxes
+        "SEL_BG":   "#2e1f5e",  # selection highlight
+    },
+    "light": {
+        "BG":       "#f4ecd8",  # aged parchment
+        "FG":       "#8a6d1f",  # deep oracle gold
+        "FG_DIM":   "#b59a55",  # muted gold
+        "ENTRY_BG": "#fffaf0",  # ivory
+        "ENTRY_FG": "#3a2e10",  # dark ink
+        "CB_BG":    "#ece0c0",  # parchment shade for checkboxes
+        "SEL_BG":   "#e6d3a3",  # selection highlight
+    },
+}
+
+# Initial constants (dark); widgets are built from these, then recolored if
+# the saved preference is light. Live toggling goes through apply_theme.
+BG        = THEMES["dark"]["BG"]
+FG        = THEMES["dark"]["FG"]
+FG_DIM    = THEMES["dark"]["FG_DIM"]
+ENTRY_BG  = THEMES["dark"]["ENTRY_BG"]
+ENTRY_FG  = THEMES["dark"]["ENTRY_FG"]
+CB_BG     = THEMES["dark"]["CB_BG"]
+SEL_BG    = THEMES["dark"]["SEL_BG"]
+
+# Color-bearing tk options we remap when switching themes.
+_THEME_ATTRS = (
+    "bg", "fg", "activebackground", "activeforeground", "selectcolor",
+    "highlightbackground", "highlightcolor", "insertbackground",
+    "selectbackground", "selectforeground",
+)
+
+def apply_theme(widget, old, new):
+    """Recursively recolor a widget subtree by mapping old palette values to new."""
+    mapping = {old[k]: new[k] for k in old}
+    def _walk(w):
+        for attr in _THEME_ATTRS:
+            try:
+                cur = str(w.cget(attr))
+            except tk.TclError:
+                continue
+            if cur in mapping:
+                try:
+                    w.configure(**{attr: mapping[cur]})
+                except tk.TclError:
+                    pass
+        for child in w.winfo_children():
+            _walk(child)
+    _walk(widget)
 
 STATE_FILE = os.path.expanduser("~/.chatbot_launcher_state.json")
 
@@ -37,6 +87,14 @@ HEALTHCARE_CONTEXT = (
     "health-tech adoption through exceptional sales intelligence."
 )
 MARKDOWN_CONTEXT = "Export response to a markdown file that can be downloaded."
+TECH_STACK_CONTEXT = (
+    "We use databricks hosted on AWS to ingest data and serve to customers "
+    "via a web-app hosted on Aurora Postgres."
+)
+MVP_CONTEXT = (
+    "This is for a minimum viable product (MVP) where we want a working "
+    "prototype working by end of day today."
+)
 
 def load_state():
     try:
@@ -288,7 +346,7 @@ def open_chatbots(question, enabled_bots):
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, markdown_var, word_limit_var, word_count_var, root):
+def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, theme_var, root):
     q = question.strip()
     if not q:
         return
@@ -302,6 +360,16 @@ def launch(question, checks, healthcare_var, markdown_var, word_limit_var, word_
         if not q.endswith("."):
             q += "."
         q += f" {MARKDOWN_CONTEXT}"
+
+    if tech_stack_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {TECH_STACK_CONTEXT}"
+
+    if mvp_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {MVP_CONTEXT}"
 
     if word_limit_var.get():
         # Pull the word count; fall back to 100 if user typed garbage
@@ -321,8 +389,11 @@ def launch(question, checks, healthcare_var, markdown_var, word_limit_var, word_
     state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
     state["healthcare"] = healthcare_var.get()
     state["markdown"] = markdown_var.get()
+    state["tech_stack"] = tech_stack_var.get()
+    state["mvp"] = mvp_var.get()
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
+    state["theme"] = theme_var.get()
     save_state(state)
 
     root.withdraw()
@@ -352,7 +423,7 @@ def main():
     root.resizable(True, True)
     root.configure(bg=BG)
 
-    w, h = 500, 230
+    w, h = 540, 270
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2 - 80
     root.geometry(f"{w}x{h}+{x}+{y}")
@@ -393,21 +464,13 @@ def main():
         cb.pack(side="left", padx=6)
         checks.append(var)
 
-    # Bottom row: healthcare context + word-limit checkbox + variable word count
-    word_limit_frame = tk.Frame(root, bg=BG)
-    word_limit_frame.pack(anchor="w", padx=20, pady=(10, 0))
+    # Options, top row: most-used (healthcare context + word-limit checkbox + variable word count)
+    options_top_frame = tk.Frame(root, bg=BG)
+    options_top_frame.pack(anchor="w", padx=20, pady=(10, 0))
 
     healthcare_var = tk.BooleanVar(value=state.get("healthcare", False))
     tk.Checkbutton(
-        word_limit_frame, text="Healthcare Startup", variable=healthcare_var,
-        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
-        activebackground=BG, activeforeground=FG,
-        selectcolor=CB_BG, bd=0,
-    ).pack(side="left", padx=(0, 10))
-
-    markdown_var = tk.BooleanVar(value=state.get("markdown", False))
-    tk.Checkbutton(
-        word_limit_frame, text="Markdown", variable=markdown_var,
+        options_top_frame, text="Healthcare Startup", variable=healthcare_var,
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
         activebackground=BG, activeforeground=FG,
         selectcolor=CB_BG, bd=0,
@@ -415,7 +478,7 @@ def main():
 
     word_limit_var = tk.BooleanVar(value=state.get("word_limit", False))
     tk.Checkbutton(
-        word_limit_frame, text="Limit to", variable=word_limit_var,
+        options_top_frame, text="Limit to", variable=word_limit_var,
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
         activebackground=BG, activeforeground=FG,
         selectcolor=CB_BG, bd=0,
@@ -423,7 +486,7 @@ def main():
 
     word_count_var = tk.StringVar(value=str(state.get("word_count", "100")))
     word_count_entry = tk.Entry(
-        word_limit_frame, textvariable=word_count_var,
+        options_top_frame, textvariable=word_count_var,
         width=5, justify="center",
         font=("Georgia", 11, "italic"),
         bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=FG,
@@ -434,12 +497,88 @@ def main():
     word_count_entry.pack(side="left", padx=(4, 4))
 
     tk.Label(
-        word_limit_frame, text="words",
+        options_top_frame, text="words",
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
     ).pack(side="left")
 
+    # Options, bottom row: less-used (markdown + tech stack + mvp)
+    options_bottom_frame = tk.Frame(root, bg=BG)
+    options_bottom_frame.pack(anchor="w", padx=20, pady=(6, 0))
+
+    markdown_var = tk.BooleanVar(value=state.get("markdown", False))
+    tk.Checkbutton(
+        options_bottom_frame, text="Markdown", variable=markdown_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
+
+    tech_stack_var = tk.BooleanVar(value=state.get("tech_stack", False))
+    tk.Checkbutton(
+        options_bottom_frame, text="Tech Stack", variable=tech_stack_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
+
+    mvp_var = tk.BooleanVar(value=state.get("mvp", False))
+    tk.Checkbutton(
+        options_bottom_frame, text="MVP", variable=mvp_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
+
+    # Theme flip-switch (dark ⟷ light), overlaid in the top-right corner of the
+    # window. tk has no native toggle, so it's a Canvas: a pill track with a
+    # sliding gold knob carrying a ☾/☀ glyph. Widgets are built dark;
+    # current_theme tracks what's live.
+    theme_var = tk.StringVar(value=state.get("theme", "dark"))
+    current_theme = {"name": "dark"}
+
+    SW_W, SW_H, SW_PAD = 52, 26, 3
+    SW_KNOB = SW_H - 2 * SW_PAD
+    switch = tk.Canvas(
+        root, width=SW_W, height=SW_H,
+        bg=BG, highlightthickness=0, bd=0,
+    )
+    switch.place(relx=1.0, x=-14, y=14, anchor="ne")
+
+    def _pill(c, x0, y0, x1, y1, fill):
+        r = (y1 - y0) / 2
+        c.create_oval(x0, y0, x0 + 2 * r, y1, fill=fill, outline=fill)
+        c.create_oval(x1 - 2 * r, y0, x1, y1, fill=fill, outline=fill)
+        c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=fill, outline=fill)
+
+    def render_switch():
+        pal = THEMES[current_theme["name"]]
+        is_light = current_theme["name"] == "light"
+        switch.delete("all")
+        switch.configure(bg=pal["BG"])
+        _pill(switch, 1, 1, SW_W - 1, SW_H - 1, pal["ENTRY_BG"])
+        kx = SW_PAD if is_light else (SW_W - SW_PAD - SW_KNOB)
+        switch.create_oval(kx, SW_PAD, kx + SW_KNOB, SW_PAD + SW_KNOB,
+                           fill=pal["FG"], outline=pal["FG"])
+        switch.create_text(kx + SW_KNOB / 2, SW_PAD + SW_KNOB / 2 + 1,
+                           text="☀" if is_light else "☾",
+                           fill=pal["BG"], font=("Georgia", 10))
+
+    def toggle_theme(event=None):
+        new_name = "light" if current_theme["name"] == "dark" else "dark"
+        apply_theme(root, THEMES[current_theme["name"]], THEMES[new_name])
+        current_theme["name"] = new_name
+        theme_var.set(new_name)
+        render_switch()
+        # Persist immediately so the choice survives closing without launching.
+        s = load_state()
+        s["theme"] = new_name
+        save_state(s)
+
+    switch.bind("<Button-1>", toggle_theme)
+    render_switch()
+
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, word_limit_var, word_count_var, root)
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, theme_var, root)
         return "break"
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
@@ -524,6 +663,10 @@ def main():
         root, text="⟡  ⌘↩ to consult  ·  Esc to withdraw  ⟡",
         font=("Georgia", 9, "italic"), bg=BG, fg=FG_DIM,
     ).pack(pady=(6, 10))
+
+    # Apply the saved theme now that every widget exists (build palette is dark).
+    if theme_var.get() != current_theme["name"]:
+        toggle_theme()
 
     root.mainloop()
 
