@@ -3,6 +3,7 @@ import threading
 import subprocess
 import tempfile
 import json
+import math
 import time
 import os
 ICON_PATH = "/Users/skita/Github/ask-the-oracle/Ask the Oracle.app/Contents/Resources/AppIcon.icns"
@@ -454,6 +455,11 @@ def main():
     entry.pack(padx=18, fill=tk.BOTH, expand=True)
     entry.focus_set()
 
+    # Flip-switch geometry, shared by the continue switch (this row) and the
+    # theme switch (top-right corner) below.
+    SW_W, SW_H, SW_PAD = 52, 26, 3
+    SW_KNOB = SW_H - 2 * SW_PAD
+
     # Oracle checkboxes
     check_frame = tk.Frame(root, bg=BG)
     check_frame.pack(anchor="w", padx=14, pady=(10, 0))
@@ -470,19 +476,18 @@ def main():
         cb.pack(side="left", padx=6)
         checks.append(var)
 
+    # Continue flip-switch, last item in the row (right of Gemini). Left = new
+    # chat (continue_var False, knob shows →); right = continue the existing
+    # conversation (continue_var True, knob shows a two-arrow loop). See open_chatbots.
+    continue_var = tk.BooleanVar(value=state.get("continue", False))
+    continue_switch = tk.Canvas(
+        check_frame, width=SW_W, height=SW_H, bg=BG, highlightthickness=0, bd=0,
+    )
+    continue_switch.pack(side="left", padx=(6, 0))
+
     # Options, top row: most-used (healthcare context + word-limit checkbox + variable word count)
     options_top_frame = tk.Frame(root, bg=BG)
     options_top_frame.pack(anchor="w", padx=20, pady=(10, 0))
-
-    # Continue Conversation: extend the current chat in an open tab instead of
-    # resetting it to a fresh chat (see open_chatbots).
-    continue_var = tk.BooleanVar(value=state.get("continue", False))
-    tk.Checkbutton(
-        options_top_frame, text="Continue Chat", variable=continue_var,
-        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
-        activebackground=BG, activeforeground=FG,
-        selectcolor=CB_BG, bd=0,
-    ).pack(side="left", padx=(0, 10))
 
     healthcare_var = tk.BooleanVar(value=state.get("healthcare", False))
     tk.Checkbutton(
@@ -552,8 +557,6 @@ def main():
     theme_var = tk.StringVar(value=state.get("theme", "dark"))
     current_theme = {"name": "dark"}
 
-    SW_W, SW_H, SW_PAD = 52, 26, 3
-    SW_KNOB = SW_H - 2 * SW_PAD
     switch = tk.Canvas(
         root, width=SW_W, height=SW_H,
         bg=BG, highlightthickness=0, bd=0,
@@ -579,19 +582,59 @@ def main():
                            text="☀" if is_light else "☾",
                            fill=pal["BG"], font=("Georgia", 10))
 
+    def render_continue():
+        pal = THEMES[current_theme["name"]]
+        on = continue_var.get()  # True = continue (knob right)
+        continue_switch.delete("all")
+        continue_switch.configure(bg=pal["BG"])
+        _pill(continue_switch, 1, 1, SW_W - 1, SW_H - 1, pal["ENTRY_BG"])
+        kx = (SW_W - SW_PAD - SW_KNOB) if on else SW_PAD
+        continue_switch.create_oval(kx, SW_PAD, kx + SW_KNOB, SW_PAD + SW_KNOB,
+                                    fill=pal["FG"], outline=pal["FG"])
+        # Glyph drawn as strokes (not text) so it takes the knob's BG color and
+        # matches the theme: a two-arrow loop for continue, a plain arrow for new.
+        cx, cy = kx + SW_KNOB / 2, SW_PAD + SW_KNOB / 2
+        ink = pal["BG"]
+        if on:
+            r = 5.5
+            def _arc(a0, a1):
+                pts = []
+                for i in range(9):
+                    a = math.radians(a0 + (a1 - a0) * i / 8)
+                    pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+                return pts
+            continue_switch.create_line(*_arc(185, 355), fill=ink, width=2, smooth=True,
+                                        arrow="last", arrowshape=(4, 5, 2), capstyle="round")
+            continue_switch.create_line(*_arc(5, 175), fill=ink, width=2, smooth=True,
+                                        arrow="last", arrowshape=(4, 5, 2), capstyle="round")
+        else:
+            continue_switch.create_line(cx - 5, cy, cx + 5, cy, fill=ink, width=2,
+                                        arrow="last", arrowshape=(4, 5, 2), capstyle="round")
+
+    def toggle_continue(event=None):
+        continue_var.set(not continue_var.get())
+        render_continue()
+        # Persist immediately so the choice survives closing without launching.
+        s = load_state()
+        s["continue"] = continue_var.get()
+        save_state(s)
+
     def toggle_theme(event=None):
         new_name = "light" if current_theme["name"] == "dark" else "dark"
         apply_theme(root, THEMES[current_theme["name"]], THEMES[new_name])
         current_theme["name"] = new_name
         theme_var.set(new_name)
         render_switch()
+        render_continue()  # canvas items aren't touched by apply_theme; redraw
         # Persist immediately so the choice survives closing without launching.
         s = load_state()
         s["theme"] = new_name
         save_state(s)
 
     switch.bind("<Button-1>", toggle_theme)
+    continue_switch.bind("<Button-1>", toggle_continue)
     render_switch()
+    render_continue()
 
     def _launch(e=None):
         launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, theme_var, root)
