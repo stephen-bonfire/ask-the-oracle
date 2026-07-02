@@ -316,15 +316,20 @@ end tell
 """
     subprocess.run(["osascript", "-e", focus_and_enter], capture_output=True, text=True)
 
-def open_chatbots(question, enabled_bots):
+def open_chatbots(question, enabled_bots, continue_conversation=False):
     try:
         # Reuse already-open tabs; only open tabs for bots that aren't open yet.
+        # When continue_conversation is set, an existing tab is left on its current
+        # conversation (no reset to a fresh chat) so the message extends that thread.
         reuse_names = set()
         for bot in enabled_bots:
             if check_existing_tab(bot["domain"]):
                 reuse_names.add(bot["name"])
-                navigate_tab_to(bot["domain"], bot["url"])  # reset to a fresh chat
-                print(f"Reusing existing tab for {bot['domain']}")
+                if continue_conversation:
+                    print(f"Continuing existing conversation for {bot['domain']}")
+                else:
+                    navigate_tab_to(bot["domain"], bot["url"])  # reset to a fresh chat
+                    print(f"Reusing existing tab for {bot['domain']} (fresh chat)")
             else:
                 open_url_in_chrome(bot["url"])  # new tab in existing window, never a new window
 
@@ -346,7 +351,7 @@ def open_chatbots(question, enabled_bots):
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, theme_var, root):
+def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, theme_var, root):
     q = question.strip()
     if not q:
         return
@@ -393,11 +398,12 @@ def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_v
     state["mvp"] = mvp_var.get()
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
+    state["continue"] = continue_var.get()
     state["theme"] = theme_var.get()
     save_state(state)
 
     root.withdraw()
-    t = threading.Thread(target=open_chatbots, args=(q, enabled_bots))
+    t = threading.Thread(target=open_chatbots, args=(q, enabled_bots, continue_var.get()))
     t.start()
 
 
@@ -467,6 +473,16 @@ def main():
     # Options, top row: most-used (healthcare context + word-limit checkbox + variable word count)
     options_top_frame = tk.Frame(root, bg=BG)
     options_top_frame.pack(anchor="w", padx=20, pady=(10, 0))
+
+    # Continue Conversation: extend the current chat in an open tab instead of
+    # resetting it to a fresh chat (see open_chatbots).
+    continue_var = tk.BooleanVar(value=state.get("continue", False))
+    tk.Checkbutton(
+        options_top_frame, text="Continue Chat", variable=continue_var,
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+        activebackground=BG, activeforeground=FG,
+        selectcolor=CB_BG, bd=0,
+    ).pack(side="left", padx=(0, 10))
 
     healthcare_var = tk.BooleanVar(value=state.get("healthcare", False))
     tk.Checkbutton(
@@ -578,7 +594,7 @@ def main():
     render_switch()
 
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, theme_var, root)
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, theme_var, root)
         return "break"
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
