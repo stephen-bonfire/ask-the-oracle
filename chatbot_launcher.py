@@ -655,12 +655,15 @@ def main():
     def _has_selection(widget):
         return bool(widget.tag_ranges("sel"))
 
-    # Cmd+Backspace: delete from cursor to start of visible line
+    # Cmd+Backspace: delete from cursor to start of visible (wrapped) line.
+    # "insert linestart" is the LOGICAL line (back to the last real \n), which
+    # spans every wrapped line in a paragraph; "display linestart" is the
+    # actual on-screen line, which is what Cmd+Backspace should respect.
     def _cmd_backspace(e):
         if _has_selection(e.widget):
             e.widget.delete("sel.first", "sel.last")
             return "break"
-        return _del_range(e.widget, "insert linestart", "insert")
+        return _del_range(e.widget, "insert display linestart", "insert")
 
     # Tk's "wordstart"/"wordend" treat a run of whitespace as its own word, so
     # from a position right at a word boundary they only cross the whitespace
@@ -689,12 +692,12 @@ def main():
             return "break"
         return _del_range(e.widget, _word_start_index(e.widget, "insert"), "insert")
 
-    # Cmd+Delete (forward): delete to end of line
+    # Cmd+Delete (forward): delete to end of visible (wrapped) line
     def _cmd_delete(e):
         if _has_selection(e.widget):
             e.widget.delete("sel.first", "sel.last")
             return "break"
-        return _del_range(e.widget, "insert", "insert lineend")
+        return _del_range(e.widget, "insert", "insert display lineend")
 
     # Option+Delete (forward): delete next word
     def _opt_delete(e):
@@ -715,8 +718,8 @@ def main():
             widget.tag_remove("sel", "1.0", "end")
         return "break"
 
-    def _cmd_left(e):  return _move(e.widget, "insert linestart", False)
-    def _cmd_right(e): return _move(e.widget, "insert lineend", False)
+    def _cmd_left(e):  return _move(e.widget, "insert display linestart", False)
+    def _cmd_right(e): return _move(e.widget, "insert display lineend", False)
     def _opt_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), False)
     def _opt_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), False)
 
