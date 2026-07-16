@@ -687,6 +687,23 @@ def main():
             idx = widget.index(f"{idx}+1c")
         return widget.index(f"{idx} wordend")
 
+    # Paragraph jump (Option+Up/Down): paragraphs here are delimited by real
+    # newlines (Tk's "linestart"/"lineend", the logical rather than display
+    # line). If already at the paragraph boundary, hop to the next one.
+    def _para_start_index(widget, idx):
+        ls = widget.index(f"{idx} linestart")
+        if widget.compare(idx, "!=", ls):
+            return ls
+        prev = widget.index(f"{idx}-1c")
+        return ls if widget.compare(prev, "==", idx) else widget.index(f"{prev} linestart")
+
+    def _para_end_index(widget, idx):
+        le = widget.index(f"{idx} lineend")
+        if widget.compare(idx, "!=", le):
+            return le
+        nxt = widget.index(f"{idx}+1c")
+        return le if widget.compare(nxt, "==", idx) else widget.index(f"{nxt} lineend")
+
     # Option+Backspace: delete previous word
     def _opt_backspace(e):
         if _has_selection(e.widget):
@@ -736,9 +753,25 @@ def main():
     def _cmd_shift_left(e):  return _move(e.widget, "insert display linestart", True)
     def _cmd_shift_right(e): return _move(e.widget, "insert display lineend", True)
 
-    # Control+Shift+Left/Right: extend selection by word
-    def _ctrl_shift_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), True)
-    def _ctrl_shift_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), True)
+    # Control+Shift+Left/Right and Option+Shift+Left/Right: extend selection by word
+    def _shift_word_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), True)
+    def _shift_word_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), True)
+
+    # Shift+Up/Down: extend selection by wrapped display line
+    def _shift_up(e):   return _move(e.widget, "insert -1 display lines", True)
+    def _shift_down(e): return _move(e.widget, "insert +1 display lines", True)
+
+    # Cmd+Shift+Up/Down: extend selection to the start/end of the whole text
+    def _cmd_shift_up(e):   return _move(e.widget, "1.0", True)
+    def _cmd_shift_down(e): return _move(e.widget, "end-1c", True)
+
+    # Cmd+Up/Down: jump to the start/end of the whole text
+    def _cmd_up(e):   return _move(e.widget, "1.0", False)
+    def _cmd_down(e): return _move(e.widget, "end-1c", False)
+
+    # Option+Up/Down: paragraph jump
+    def _opt_up(e):   return _move(e.widget, _para_start_index(e.widget, "insert"), False)
+    def _opt_down(e): return _move(e.widget, _para_end_index(e.widget, "insert"), False)
 
     def _select_all(e):
         e.widget.tag_add("sel", "1.0", "end-1c")
@@ -771,8 +804,18 @@ def main():
         ("<Option-Right>",      _opt_right),
         ("<Command-Shift-Left>",  _cmd_shift_left),
         ("<Command-Shift-Right>", _cmd_shift_right),
-        ("<Control-Shift-Left>",  _ctrl_shift_left),
-        ("<Control-Shift-Right>", _ctrl_shift_right),
+        ("<Control-Shift-Left>",  _shift_word_left),
+        ("<Control-Shift-Right>", _shift_word_right),
+        ("<Option-Shift-Left>",   _shift_word_left),
+        ("<Option-Shift-Right>",  _shift_word_right),
+        ("<Shift-Up>",           _shift_up),
+        ("<Shift-Down>",         _shift_down),
+        ("<Command-Shift-Up>",   _cmd_shift_up),
+        ("<Command-Shift-Down>", _cmd_shift_down),
+        ("<Command-Up>",        _cmd_up),
+        ("<Command-Down>",      _cmd_down),
+        ("<Option-Up>",         _opt_up),
+        ("<Option-Down>",       _opt_down),
         ("<Command-a>",         _select_all),
         ("<Command-A>",         _select_all),
         ("<Command-z>",         _undo),
