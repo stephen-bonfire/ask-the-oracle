@@ -708,22 +708,37 @@ def main():
             return "break"
         return _del_range(e.widget, "insert", _word_end_index(e.widget, "insert"))
 
-    # Cursor movement
+    # Cursor movement. With select=True, extends the "sel" tag between a
+    # persistent "anchor" mark (set fresh only when no selection is active)
+    # and the new insert position, so repeated shift-jumps grow/shrink the
+    # same selection instead of resetting its start each time.
     def _move(widget, index, select):
         if select:
             if not _has_selection(widget):
-                widget.tag_add("sel", "insert")
-            widget.mark_set("anchor", widget.index("sel.first") if _has_selection(widget) else "insert")
-        widget.mark_set("insert", index)
-        widget.see("insert")
-        if not select:
+                widget.mark_set("anchor", "insert")
+            widget.mark_set("insert", index)
+            anchor, ins = widget.index("anchor"), widget.index("insert")
+            start, end = (anchor, ins) if widget.compare(anchor, "<=", ins) else (ins, anchor)
             widget.tag_remove("sel", "1.0", "end")
+            widget.tag_add("sel", start, end)
+        else:
+            widget.mark_set("insert", index)
+            widget.tag_remove("sel", "1.0", "end")
+        widget.see("insert")
         return "break"
 
     def _cmd_left(e):  return _move(e.widget, "insert display linestart", False)
     def _cmd_right(e): return _move(e.widget, "insert display lineend", False)
     def _opt_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), False)
     def _opt_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), False)
+
+    # Cmd+Shift+Left/Right: extend selection to the wrapped display-line edge
+    def _cmd_shift_left(e):  return _move(e.widget, "insert display linestart", True)
+    def _cmd_shift_right(e): return _move(e.widget, "insert display lineend", True)
+
+    # Control+Shift+Left/Right: extend selection by word
+    def _ctrl_shift_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), True)
+    def _ctrl_shift_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), True)
 
     def _select_all(e):
         e.widget.tag_add("sel", "1.0", "end-1c")
@@ -754,6 +769,10 @@ def main():
         ("<Command-Right>",     _cmd_right),
         ("<Option-Left>",       _opt_left),
         ("<Option-Right>",      _opt_right),
+        ("<Command-Shift-Left>",  _cmd_shift_left),
+        ("<Command-Shift-Right>", _cmd_shift_right),
+        ("<Control-Shift-Left>",  _ctrl_shift_left),
+        ("<Control-Shift-Right>", _ctrl_shift_right),
         ("<Command-a>",         _select_all),
         ("<Command-A>",         _select_all),
         ("<Command-z>",         _undo),
