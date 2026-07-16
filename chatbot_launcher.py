@@ -451,6 +451,7 @@ def main():
         highlightbackground=FG_DIM, highlightcolor=FG,
         selectbackground=SEL_BG, selectforeground=ENTRY_FG,
         padx=6, pady=6,
+        undo=True, autoseparators=True, maxundo=100,
     )
     entry.pack(padx=18, fill=tk.BOTH, expand=True)
     entry.focus_set()
@@ -704,6 +705,21 @@ def main():
         e.widget.mark_set("insert", "end-1c")
         return "break"
 
+    # Cmd+Z / Cmd+Shift+Z: undo/redo (Tk's Text undo stack, enabled above)
+    def _undo(e):
+        try:
+            e.widget.edit_undo()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _redo(e):
+        try:
+            e.widget.edit_redo()
+        except tk.TclError:
+            pass
+        return "break"
+
     for seq, fn in [
         ("<Command-BackSpace>", _cmd_backspace),
         ("<Option-BackSpace>",  _opt_backspace),
@@ -715,6 +731,10 @@ def main():
         ("<Option-Right>",      _opt_right),
         ("<Command-a>",         _select_all),
         ("<Command-A>",         _select_all),
+        ("<Command-z>",         _undo),
+        ("<Command-Z>",         _undo),
+        ("<Command-Shift-z>",   _redo),
+        ("<Command-Shift-Z>",   _redo),
     ]:
         entry.bind(seq, fn)
 
