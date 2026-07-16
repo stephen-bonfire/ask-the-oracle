@@ -662,12 +662,32 @@ def main():
             return "break"
         return _del_range(e.widget, "insert linestart", "insert")
 
+    # Tk's "wordstart"/"wordend" treat a run of whitespace as its own word, so
+    # from a position right at a word boundary they only cross the whitespace
+    # gap, not the next word too. Skip whitespace first so one stroke always
+    # clears a full word, matching macOS's native word-jump behavior.
+    def _word_start_index(widget, idx):
+        while True:
+            prev = widget.index(f"{idx}-1c")
+            if widget.compare(prev, "==", idx) or not widget.get(prev).isspace():
+                break
+            idx = prev
+        return widget.index(f"{idx} wordstart")
+
+    def _word_end_index(widget, idx):
+        while True:
+            ch = widget.get(idx)
+            if not ch or not ch.isspace():
+                break
+            idx = widget.index(f"{idx}+1c")
+        return widget.index(f"{idx} wordend")
+
     # Option+Backspace: delete previous word
     def _opt_backspace(e):
         if _has_selection(e.widget):
             e.widget.delete("sel.first", "sel.last")
             return "break"
-        return _del_range(e.widget, "insert-1c wordstart", "insert")
+        return _del_range(e.widget, _word_start_index(e.widget, "insert"), "insert")
 
     # Cmd+Delete (forward): delete to end of line
     def _cmd_delete(e):
@@ -681,7 +701,7 @@ def main():
         if _has_selection(e.widget):
             e.widget.delete("sel.first", "sel.last")
             return "break"
-        return _del_range(e.widget, "insert", "insert wordend")
+        return _del_range(e.widget, "insert", _word_end_index(e.widget, "insert"))
 
     # Cursor movement
     def _move(widget, index, select):
@@ -697,8 +717,8 @@ def main():
 
     def _cmd_left(e):  return _move(e.widget, "insert linestart", False)
     def _cmd_right(e): return _move(e.widget, "insert lineend", False)
-    def _opt_left(e):  return _move(e.widget, "insert-1c wordstart", False)
-    def _opt_right(e): return _move(e.widget, "insert wordend", False)
+    def _opt_left(e):  return _move(e.widget, _word_start_index(e.widget, "insert"), False)
+    def _opt_right(e): return _move(e.widget, _word_end_index(e.widget, "insert"), False)
 
     def _select_all(e):
         e.widget.tag_add("sel", "1.0", "end-1c")
