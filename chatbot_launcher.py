@@ -675,7 +675,9 @@ def main():
             if widget.compare(prev, "==", idx) or not widget.get(prev).isspace():
                 break
             idx = prev
-        return widget.index(f"{idx} wordstart")
+        # wordstart looks at the character to the RIGHT of the index, so use
+        # idx-1c (the char we just confirmed is non-whitespace) as the anchor.
+        return widget.index(f"{idx}-1c wordstart")
 
     def _word_end_index(widget, idx):
         while True:
