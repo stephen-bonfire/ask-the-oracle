@@ -543,7 +543,7 @@ def main():
     root.resizable(True, True)
     root.configure(bg=BG)
 
-    w, h = 540, 270
+    w, h = 540, 330
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2 - 80
     root.geometry(f"{w}x{h}+{x}+{y}")
@@ -557,7 +557,7 @@ def main():
     ).pack(pady=(14, 6))
 
     entry = tk.Text(
-        root, font=("Georgia", 13), width=44, height=3,
+        root, font=("Georgia", 13), width=44, height=5,
         wrap="word",
         bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=FG,
         relief="flat", highlightthickness=1,
