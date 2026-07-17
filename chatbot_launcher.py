@@ -23,6 +23,18 @@ CHATBOTS = [
     {"name": "Gemini",  "label": "Gemini",         "url": "https://gemini.google.com",  "domain": "gemini.google.com", "wait": 3.0},
 ]
 
+# Effort level -> the exact label each site's in-page model picker shows for that
+# choice. Confirmed by driving each picker live (Chrome + osascript) rather than
+# guessed: ChatGPT's "Intelligence" pill exposes Instant/Medium/High directly;
+# Claude's picker needs its "More models" submenu opened for Opus/Sonnet;
+# Gemini's picker lists Flash/Thinking/Pro with no submenu.
+EFFORT_MODELS = {
+    "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Instant"},
+    "Claude":  {"high": "Opus 4.8",  "medium": "Sonnet 5",       "low": "Haiku 4.5"},
+    "Gemini":  {"high": "Thinking",  "medium": "Pro",            "low": "Flash"},
+}
+EFFORT_LEVELS = ["low", "medium", "high"]
+
 # Two oracle palettes. Live theme switching remaps widget colors by value
 # (see apply_theme), so the values within each palette must stay distinct.
 THEMES = {
@@ -108,8 +120,55 @@ def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
-def build_js(question, name):
+# Regex (as a JS literal) used to find each site's model-picker trigger button,
+# independent of which model is currently selected (so it works no matter what
+# was picked last time). Confirmed against the live DOM for each site.
+_MODEL_BUTTON_RE = {
+    "ChatGPT": "/Instant|Medium|High|Pro|GPT-5/",
+    "Claude":  "/Haiku|Sonnet|Opus|Fable/",
+    "Gemini":  "/Flash|Thinking|Pro/",
+}
+
+def build_js(question, name, extra=None):
     q = question.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    label = (extra or "").replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+
+    if name.endswith(":openModel"):
+        bot = name.split(":")[0]
+        re_literal = _MODEL_BUTTON_RE.get(bot, "/(?!)/")  # never matches if bot unknown
+        return f"""
+(function() {{
+    var re = {re_literal};
+    var b = Array.from(document.querySelectorAll('button[aria-haspopup]')).find(function(x) {{
+        return re.test(x.textContent) && x.textContent.trim().length < 40;
+    }});
+    if (!b) {{ return "notfound"; }}
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
+        b.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
+    }});
+    return "opened";
+}})();
+"""
+
+    if name.endswith(":pickModel"):
+        # Generic across all three sites: click the menu item whose text contains
+        # the target label. If not present at this level, Claude's models hide
+        # behind a "More models" submenu — click that and let the caller retry.
+        return f"""
+(function() {{
+    var items = Array.from(document.querySelectorAll('[role=menuitem],[role=menuitemradio],[role=option]'));
+    function fire(el) {{
+        ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
+            el.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
+        }});
+    }}
+    var target = items.find(function(i) {{ return i.textContent.includes(`{label}`); }});
+    if (target) {{ fire(target); return "selected"; }}
+    var more = items.find(function(i) {{ return i.textContent.includes("More models"); }});
+    if (more) {{ fire(more); return "submenu"; }}
+    return "notfound";
+}})();
+"""
 
     if name == "ChatGPT:insert":
         return f"""
@@ -209,6 +268,18 @@ def build_js(question, name):
 })();
 """
 
+    if name == "Gemini:insertOnly":
+        return f"""
+(function() {{
+    var el = document.querySelector("rich-textarea .ql-editor");
+    if (!el) {{ el = document.querySelector("div[role='textbox']"); }}
+    if (!el) {{ return "not found: gemini input"; }}
+    el.focus();
+    document.execCommand("insertText", false, `{q}`);
+    return "ok: text inserted, not sent";
+}})();
+"""
+
     if name == "Gemini":
         return f"""
 (function() {{
@@ -289,13 +360,14 @@ end tell
 """
     r = subprocess.run(["osascript", "-e", inject_script], capture_output=True, text=True)
     os.unlink(js_path)
-    print(f"{domain}: {r.stdout.strip() or r.stderr.strip() or 'no output'}")
+    result = r.stdout.strip() or r.stderr.strip() or "no output"
+    print(f"{domain}: {result}")
 
     # Step 2 (optional): focus the tab and press Enter via a real keystroke.
     # Only do this when explicitly asked — pressing Enter on the *insert* step would
     # send the message prematurely, leaving the send step to misfire on an empty composer.
     if not press_enter:
-        return
+        return result
 
     focus_and_enter = f"""
 tell application "Google Chrome"
@@ -316,8 +388,39 @@ tell application "System Events"
 end tell
 """
     subprocess.run(["osascript", "-e", focus_and_enter], capture_output=True, text=True)
+    return result
 
-def open_chatbots(question, enabled_bots, continue_conversation=False):
+def select_model(bot, effort):
+    """Open the site's model picker and click the item mapped to `effort`.
+
+    Returns True if the model is confirmed selected, False if the picker button
+    or matching menu item couldn't be found (site UI changed) — the caller then
+    leaves the prompt pasted but unsent so the user can pick a model manually.
+    """
+    label = EFFORT_MODELS.get(bot["name"], {}).get(effort)
+    if not label:
+        return True
+
+    domain = bot["domain"]
+    opened = inject_into_tab(domain, build_js("", f"{bot['name']}:openModel"))
+    if opened != "opened":
+        print(f"{domain}: model picker button not found")
+        return False
+
+    time.sleep(0.5)
+    result = inject_into_tab(domain, build_js("", f"{bot['name']}:pickModel", extra=label))
+    if result == "submenu":
+        time.sleep(0.5)
+        result = inject_into_tab(domain, build_js("", f"{bot['name']}:pickModel", extra=label))
+
+    if result != "selected":
+        print(f"{domain}: could not select model \"{label}\"")
+        return False
+
+    time.sleep(0.3)
+    return True
+
+def open_chatbots(question, enabled_bots, effort="medium", continue_conversation=False):
     try:
         # Reuse already-open tabs; only open tabs for bots that aren't open yet.
         # When continue_conversation is set, an existing tab is left on its current
@@ -339,20 +442,29 @@ def open_chatbots(question, enabled_bots, continue_conversation=False):
             wait = round(bot["wait"] * 0.6, 1) if is_reuse else bot["wait"]
             print(f"Waiting {wait}s for {bot['domain']} ({'existing' if is_reuse else 'new'} tab)...")
             time.sleep(wait)
+            model_ok = select_model(bot, effort)
             if bot["name"] in ("Claude", "ChatGPT"):
                 # Insert text WITHOUT pressing Enter, then click the send button via JS.
                 inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:insert"), press_enter=False)
-                time.sleep(0.5)
-                # Send via JS click (mic-guarded); hardware Enter is a safe backup since the composer has text.
-                inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"), press_enter=True)
+                if model_ok:
+                    time.sleep(0.5)
+                    # Send via JS click (mic-guarded); hardware Enter is a safe backup since the composer has text.
+                    inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"), press_enter=True)
+                else:
+                    print(f"{bot['domain']}: leaving prompt unsent (model selection failed)")
             else:
-                # Gemini: its JS inserts + clicks send; keep the hardware-Enter backup.
-                inject_into_tab(bot["domain"], build_js(question, bot["name"]), press_enter=True)
+                # Gemini: its JS normally inserts + clicks send in one step; if the model
+                # couldn't be set, insert only and leave it for the user to send.
+                if model_ok:
+                    inject_into_tab(bot["domain"], build_js(question, bot["name"]), press_enter=True)
+                else:
+                    inject_into_tab(bot["domain"], build_js(question, "Gemini:insertOnly"), press_enter=False)
+                    print(f"{bot['domain']}: leaving prompt unsent (model selection failed)")
 
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, theme_var, root):
+def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
     q = question.strip()
     if not q:
         return
@@ -400,11 +512,12 @@ def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_v
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
     state["continue"] = continue_var.get()
+    state["effort"] = effort_var.get()
     state["theme"] = theme_var.get()
     save_state(state)
 
     root.withdraw()
-    t = threading.Thread(target=open_chatbots, args=(q, enabled_bots, continue_var.get()))
+    t = threading.Thread(target=open_chatbots, args=(q, enabled_bots, effort_var.get(), continue_var.get()))
     t.start()
 
 
@@ -485,6 +598,25 @@ def main():
         check_frame, width=SW_W, height=SW_H, bg=BG, highlightthickness=0, bd=0,
     )
     continue_switch.pack(side="left", padx=(6, 0))
+
+    # Effort selector: one global Low/Medium/High choice, translated per-site to a
+    # model via EFFORT_MODELS before the prompt is sent (see select_model()).
+    effort_frame = tk.Frame(root, bg=BG)
+    effort_frame.pack(anchor="w", padx=14, pady=(6, 0))
+
+    tk.Label(
+        effort_frame, text="Effort:",
+        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
+    ).pack(side="left", padx=(0, 6))
+
+    effort_var = tk.StringVar(value=state.get("effort", "medium"))
+    for level in EFFORT_LEVELS:
+        tk.Radiobutton(
+            effort_frame, text=level.capitalize(), value=level, variable=effort_var,
+            font=("Georgia", 11, "italic"), bg=BG, fg=FG,
+            activebackground=BG, activeforeground=FG,
+            selectcolor=CB_BG, bd=0,
+        ).pack(side="left", padx=(0, 8))
 
     # Options, top row: most-used (healthcare context + word-limit checkbox + variable word count)
     options_top_frame = tk.Frame(root, bg=BG)
@@ -638,7 +770,7 @@ def main():
     render_continue()
 
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, theme_var, root)
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root)
         return "break"
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
