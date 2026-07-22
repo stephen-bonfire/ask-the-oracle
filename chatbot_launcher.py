@@ -105,9 +105,13 @@ TECH_STACK_CONTEXT = (
     "via a web-app hosted on Aurora Postgres. The developers all work from "
     "local environments on apple macbooks."
 )
-MVP_CONTEXT = (
-    "This is for a minimum viable product (MVP) where we want a working "
-    "prototype working by end of day today."
+POC_CONTEXT = (
+    "This is a throwaway proof-of-concept that needs to be running in under "
+    "30 minutes — 1 hour absolute max. Do the simplest thing that works: "
+    "single file if possible, hardcode where reasonable, minimal "
+    "dependencies. Skip auth, tests, error handling, config, and abstractions "
+    "unless they're essential to demonstrate the core idea. Getting a working "
+    "version running now beats doing it \"right.\""
 )
 
 def load_state():
@@ -465,7 +469,7 @@ def open_chatbots(question, enabled_bots, effort="medium", continue_conversation
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
+def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, poc_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
     q = question.strip()
     if not q:
         return
@@ -485,10 +489,10 @@ def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_v
             q += "."
         q += f" {TECH_STACK_CONTEXT}"
 
-    if mvp_var.get():
+    if poc_var.get():
         if not q.endswith("."):
             q += "."
-        q += f" {MVP_CONTEXT}"
+        q += f" {POC_CONTEXT}"
 
     if word_limit_var.get():
         # Pull the word count; fall back to 100 if user typed garbage
@@ -509,7 +513,7 @@ def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, mvp_v
     state["healthcare"] = healthcare_var.get()
     state["markdown"] = markdown_var.get()
     state["tech_stack"] = tech_stack_var.get()
-    state["mvp"] = mvp_var.get()
+    state["poc"] = poc_var.get()
     state["word_limit"] = word_limit_var.get()
     state["word_count"] = word_count_var.get()
     state["continue"] = continue_var.get()
@@ -656,7 +660,7 @@ def main():
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
     ).pack(side="left")
 
-    # Options, bottom row: less-used (markdown + tech stack + mvp)
+    # Options, bottom row: less-used (markdown + tech stack + poc)
     options_bottom_frame = tk.Frame(root, bg=BG)
     options_bottom_frame.pack(anchor="w", padx=20, pady=(6, 0))
 
@@ -676,9 +680,9 @@ def main():
         selectcolor=CB_BG, bd=0,
     ).pack(side="left", padx=(0, 10))
 
-    mvp_var = tk.BooleanVar(value=state.get("mvp", False))
+    poc_var = tk.BooleanVar(value=state.get("poc", False))
     tk.Checkbutton(
-        options_bottom_frame, text="MVP", variable=mvp_var,
+        options_bottom_frame, text="POC", variable=poc_var,
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
         activebackground=BG, activeforeground=FG,
         selectcolor=CB_BG, bd=0,
@@ -771,7 +775,7 @@ def main():
     render_continue()
 
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, mvp_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root)
+        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, poc_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root)
         return "break"
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
