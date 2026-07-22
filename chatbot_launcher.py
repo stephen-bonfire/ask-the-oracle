@@ -31,7 +31,7 @@ CHATBOTS = [
 EFFORT_MODELS = {
     "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Instant"},
     "Claude":  {"high": "Opus 4.8",  "medium": "Sonnet 5",       "low": "Haiku 4.5"},
-    "Gemini":  {"high": "Thinking",  "medium": "Pro",            "low": "Flash"},
+    "Gemini":  {"high": "Pro",       "medium": "Thinking",       "low": "Flash"},
 }
 EFFORT_LEVELS = ["low", "medium", "high"]
 
@@ -102,7 +102,8 @@ HEALTHCARE_CONTEXT = (
 MARKDOWN_CONTEXT = "Export response to a markdown file that can be downloaded."
 TECH_STACK_CONTEXT = (
     "We use databricks hosted on AWS to ingest data and serve to customers "
-    "via a web-app hosted on Aurora Postgres."
+    "via a web-app hosted on Aurora Postgres. The developers all work from "
+    "local environments on apple macbooks."
 )
 MVP_CONTEXT = (
     "This is for a minimum viable product (MVP) where we want a working "
