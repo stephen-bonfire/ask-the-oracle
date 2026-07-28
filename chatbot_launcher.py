@@ -554,12 +554,15 @@ def copy_previous_response(bot):
     )
 
 
-def combined_responses_prompt(responses):
+def combined_responses_prompt(instruction, responses):
+    """Build the synthesis prompt, preserving the user's instruction first."""
     sections = "\n\n".join(
         f"## {bot_name}\n\n{response}" for bot_name, response in responses
     )
+    instruction = instruction.strip()
+    instruction_prefix = f"{instruction}\n\n" if instruction else ""
     return (
-        "Review these responses from three different chatbots. "
+        f"{instruction_prefix}Review these responses from three different chatbots. "
         "Reconcile any differences and provide a unified, unbiased summary.\n\n"
         f"{sections}"
     )
@@ -673,8 +676,8 @@ def launch(question, checks, healthcare_var, tech_stack_var, poc_var, word_limit
     root.after(500, wait_for_thread)
 
 
-def launch_combined_responses(checks, healthcare_var, tech_stack_var, poc_var, word_limit_var,
-                              word_count_var, continue_var, effort_var, theme_var, root):
+def launch_combined_responses(instruction, checks, healthcare_var, tech_stack_var, poc_var,
+                              word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
     """Copy each open bot's latest response, then send the combined prompt onward."""
     enabled_bots = [bot for bot, var in zip(CHATBOTS, checks) if var.get()]
     if not enabled_bots:
@@ -713,7 +716,7 @@ def launch_combined_responses(checks, healthcare_var, tech_stack_var, poc_var, w
                 return
 
             prompt = apply_prompt_settings(
-                combined_responses_prompt(responses), healthcare_var, tech_stack_var, poc_var,
+                combined_responses_prompt(instruction, responses), healthcare_var, tech_stack_var, poc_var,
                 word_limit_var, word_count_var,
             )
             open_chatbots(prompt, enabled_bots, effort_var.get(), continue_var.get())
@@ -991,8 +994,8 @@ def main():
 
     def _launch_combined_responses():
         launch_combined_responses(
-            checks, healthcare_var, tech_stack_var, poc_var, word_limit_var, word_count_var,
-            continue_var, effort_var, theme_var, root,
+            entry.get("1.0", "end-1c"), checks, healthcare_var, tech_stack_var, poc_var,
+            word_limit_var, word_count_var, continue_var, effort_var, theme_var, root,
         )
 
     synthesize_button.bind("<Button-1>", lambda event: _launch_combined_responses())
