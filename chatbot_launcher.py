@@ -6,6 +6,7 @@ import json
 import math
 import time
 import os
+import uuid
 ICON_PATH = "/Users/skita/Github/ask-the-oracle/Ask the Oracle.app/Contents/Resources/AppIcon.icns"
 
 def set_dock_icon():
@@ -99,7 +100,6 @@ HEALTHCARE_CONTEXT = (
     "We work for an early-stage startup with the mission of accelerating "
     "health-tech adoption through exceptional sales intelligence."
 )
-MARKDOWN_CONTEXT = "Export response to a markdown file that can be downloaded."
 TECH_STACK_CONTEXT = (
     "We use databricks hosted on AWS to ingest data and serve to customers "
     "via a web-app hosted on Aurora Postgres. The developers all work from "
@@ -124,6 +124,21 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
+
+
+def save_launch_state(checks, healthcare_var, tech_stack_var, poc_var, word_limit_var,
+                      word_count_var, continue_var, effort_var, theme_var):
+    """Persist the current launch settings for either prompt action."""
+    state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
+    state["healthcare"] = healthcare_var.get()
+    state["tech_stack"] = tech_stack_var.get()
+    state["poc"] = poc_var.get()
+    state["word_limit"] = word_limit_var.get()
+    state["word_count"] = word_count_var.get()
+    state["continue"] = continue_var.get()
+    state["effort"] = effort_var.get()
+    state["theme"] = theme_var.get()
+    save_state(state)
 
 # Regex (as a JS literal) used to find each site's model-picker trigger button,
 # independent of which model is currently selected (so it works no matter what
@@ -301,6 +316,54 @@ def build_js(question, name, extra=None):
 }})();
 """
 
+    if name.endswith(":locateCopyPreviousResponse"):
+        # These are the response-level copy controls observed in the live sites.
+        # Selecting the final matching control skips code-block copy buttons.
+        bot = name.split(":")[0]
+        if bot == "ChatGPT":
+            selector = "Array.from(document.querySelectorAll('button[data-testid=copy-turn-action-button][aria-label=\\\"Copy response\\\"]'))"
+        elif bot == "Claude":
+            selector = "Array.from(document.querySelectorAll('button[data-testid=action-bar-copy][aria-label=Copy]'))"
+        else:
+            selector = "Array.from(document.querySelectorAll('button[aria-label=Copy]'))"
+        return f"""
+(function() {{
+    var buttons = {selector};
+    var button = buttons[buttons.length - 1];
+    if (!button) {{ return "not found"; }}
+    button.scrollIntoView({{block: "center", inline: "center"}});
+    var rect = button.getBoundingClientRect();
+    return [
+        Math.round(rect.left + rect.width / 2),
+        Math.round(rect.top + rect.height / 2),
+        Math.round(window.innerHeight),
+    ].join(",");
+}})();
+"""
+
+    if name.endswith(":extractPreviousResponse"):
+        # Clipboard writes require a trusted browser click. If macOS blocks that
+        # automation, use the same response-level control to locate the message
+        # container and preserve the button's "latest assistant response" meaning.
+        bot = name.split(":")[0]
+        if bot == "ChatGPT":
+            button_selector = "button[data-testid=copy-turn-action-button][aria-label=\\\"Copy response\\\"]"
+            container_selector = "section"
+        elif bot == "Claude":
+            button_selector = "button[data-testid=action-bar-copy][aria-label=Copy]"
+            container_selector = "[role=article]"
+        else:
+            button_selector = "button[aria-label=Copy]"
+            container_selector = "response-container"
+        return f"""
+(function() {{
+    var buttons = Array.from(document.querySelectorAll('{button_selector}'));
+    var button = buttons[buttons.length - 1];
+    var container = button && button.closest('{container_selector}');
+    return container ? container.innerText.trim() : "";
+}})();
+"""
+
     return ""
 
 def check_existing_tab(domain):
@@ -341,7 +404,7 @@ def open_url_in_chrome(url):
     script = f'tell application "Google Chrome" to open location "{url}"'
     subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
 
-def inject_into_tab(domain, js_code, press_enter=False):
+def inject_into_tab(domain, js_code, press_enter=False, log_result=True):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
         f.write(js_code)
         js_path = f.name
@@ -366,7 +429,8 @@ end tell
     r = subprocess.run(["osascript", "-e", inject_script], capture_output=True, text=True)
     os.unlink(js_path)
     result = r.stdout.strip() or r.stderr.strip() or "no output"
-    print(f"{domain}: {result}")
+    if log_result:
+        print(f"{domain}: {result}")
 
     # Step 2 (optional): focus the tab and press Enter via a real keystroke.
     # Only do this when explicitly asked — pressing Enter on the *insert* step would
@@ -425,6 +489,114 @@ def select_model(bot, effort):
     time.sleep(0.3)
     return True
 
+
+def clipboard_text():
+    return subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+
+
+def set_clipboard_text(value):
+    subprocess.run(["pbcopy"], input=value, text=True, check=True)
+
+
+def click_tab_point(domain, x, y, viewport_height):
+    """Focus the first matching Chrome tab and click a viewport-relative point."""
+    click_script = f"""
+tell application "Google Chrome"
+    repeat with w in windows
+        set tabIndex to 0
+        repeat with t in tabs of w
+            set tabIndex to tabIndex + 1
+            if URL of t contains "{domain}" then
+                set active tab index of w to tabIndex
+                set index of w to 1
+                activate
+                set windowBounds to bounds of w
+                set screenX to (item 1 of windowBounds) + {x}
+                set screenY to (item 4 of windowBounds) - {viewport_height} + {y}
+                delay 0.2
+                tell application "System Events" to click at {{screenX, screenY}}
+                return
+            end if
+        end repeat
+    end repeat
+end tell
+"""
+    result = subprocess.run(["osascript", "-e", click_script], capture_output=True, text=True)
+    if result.returncode:
+        print(f"{domain}: could not click copy control ({result.stderr.strip()})")
+        return False
+    return True
+
+
+def copy_previous_response(bot):
+    """Click the site's latest response copy control and return the copied text."""
+    sentinel = f"ask-the-oracle-{uuid.uuid4()}"
+    set_clipboard_text(sentinel)
+    location = inject_into_tab(bot["domain"], build_js("", f"{bot['name']}:locateCopyPreviousResponse"))
+    try:
+        x, y, viewport_height = (int(value) for value in location.split(","))
+    except ValueError:
+        print(f"{bot['domain']}: response copy control not found ({location})")
+        return ""
+    if not click_tab_point(bot["domain"], x, y, viewport_height):
+        return ""
+
+    # The browser copy control writes to the macOS pasteboard after its click handler.
+    for _ in range(10):
+        time.sleep(0.15)
+        copied = clipboard_text()
+        if copied != sentinel:
+            return copied.strip()
+
+    print(f"{bot['domain']}: copy control did not update the clipboard; reading linked response")
+    return inject_into_tab(
+        bot["domain"], build_js("", f"{bot['name']}:extractPreviousResponse"), log_result=False,
+    )
+
+
+def combined_responses_prompt(responses):
+    sections = "\n\n".join(
+        f"## {bot_name}\n\n{response}" for bot_name, response in responses
+    )
+    return (
+        "Review these responses from three different chatbots. "
+        "Reconcile any differences and provide a unified, unbiased summary.\n\n"
+        f"{sections}"
+    )
+
+
+def apply_prompt_settings(question, healthcare_var, tech_stack_var, poc_var, word_limit_var, word_count_var):
+    """Append the enabled prompt context options to a message."""
+    q = question
+    if healthcare_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {HEALTHCARE_CONTEXT}"
+
+    if tech_stack_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {TECH_STACK_CONTEXT}"
+
+    if poc_var.get():
+        if not q.endswith("."):
+            q += "."
+        q += f" {POC_CONTEXT}"
+
+    if word_limit_var.get():
+        # Pull the word count; fall back to 100 if user typed garbage.
+        raw = word_count_var.get().strip()
+        try:
+            n = max(1, int(raw))
+        except (ValueError, TypeError):
+            n = 100
+        if not q.endswith("."):
+            q += "."
+        q += f" Limit to {n} words."
+
+    return q
+
+
 def open_chatbots(question, enabled_bots, effort="medium", continue_conversation=False):
     try:
         # Reuse already-open tabs; only open tabs for bots that aren't open yet.
@@ -469,57 +641,23 @@ def open_chatbots(question, enabled_bots, effort="medium", continue_conversation
     except Exception as e:
         os.system(f'osascript -e \'display alert "Launcher error" message "{str(e)[:200]}"\'')
 
-def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, poc_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
+def launch(question, checks, healthcare_var, tech_stack_var, poc_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root):
     q = question.strip()
     if not q:
         return
 
-    if healthcare_var.get():
-        if not q.endswith("."):
-            q += "."
-        q += f" {HEALTHCARE_CONTEXT}"
-
-    if markdown_var.get():
-        if not q.endswith("."):
-            q += "."
-        q += f" {MARKDOWN_CONTEXT}"
-
-    if tech_stack_var.get():
-        if not q.endswith("."):
-            q += "."
-        q += f" {TECH_STACK_CONTEXT}"
-
-    if poc_var.get():
-        if not q.endswith("."):
-            q += "."
-        q += f" {POC_CONTEXT}"
-
-    if word_limit_var.get():
-        # Pull the word count; fall back to 100 if user typed garbage
-        raw = word_count_var.get().strip()
-        try:
-            n = max(1, int(raw))
-        except (ValueError, TypeError):
-            n = 100
-        if not q.endswith("."):
-            q += "."
-        q += f" Limit to {n} words."
+    q = apply_prompt_settings(
+        q, healthcare_var, tech_stack_var, poc_var, word_limit_var, word_count_var,
+    )
 
     enabled_bots = [bot for bot, var in zip(CHATBOTS, checks) if var.get()]
     if not enabled_bots:
         return
 
-    state = {bot["name"]: var.get() for bot, var in zip(CHATBOTS, checks)}
-    state["healthcare"] = healthcare_var.get()
-    state["markdown"] = markdown_var.get()
-    state["tech_stack"] = tech_stack_var.get()
-    state["poc"] = poc_var.get()
-    state["word_limit"] = word_limit_var.get()
-    state["word_count"] = word_count_var.get()
-    state["continue"] = continue_var.get()
-    state["effort"] = effort_var.get()
-    state["theme"] = theme_var.get()
-    save_state(state)
+    save_launch_state(
+        checks, healthcare_var, tech_stack_var, poc_var, word_limit_var,
+        word_count_var, continue_var, effort_var, theme_var,
+    )
 
     root.withdraw()
     t = threading.Thread(target=open_chatbots, args=(q, enabled_bots, effort_var.get(), continue_var.get()))
@@ -529,6 +667,67 @@ def launch(question, checks, healthcare_var, markdown_var, tech_stack_var, poc_v
     def wait_for_thread():
         if t.is_alive():
             root.after(500, wait_for_thread)
+        else:
+            root.destroy()
+
+    root.after(500, wait_for_thread)
+
+
+def launch_combined_responses(checks, healthcare_var, tech_stack_var, poc_var, word_limit_var,
+                              word_count_var, continue_var, effort_var, theme_var, root):
+    """Copy each open bot's latest response, then send the combined prompt onward."""
+    enabled_bots = [bot for bot, var in zip(CHATBOTS, checks) if var.get()]
+    if not enabled_bots:
+        return
+
+    save_launch_state(
+        checks, healthcare_var, tech_stack_var, poc_var, word_limit_var,
+        word_count_var, continue_var, effort_var, theme_var,
+    )
+    root.withdraw()
+    keep_open = {"value": False}
+
+    def copy_and_launch():
+        original_clipboard = clipboard_text()
+        try:
+            responses = []
+            for bot in CHATBOTS:
+                if not check_existing_tab(bot["domain"]):
+                    print(f"{bot['domain']}: no open chat to copy")
+                    continue
+                response = copy_previous_response(bot)
+                if response:
+                    responses.append((bot["name"], response))
+
+            if not responses:
+                keep_open["value"] = True
+
+                def show_copy_error():
+                    root.deiconify()
+                    os.system(
+                        "osascript -e 'display alert \"No responses copied\" "
+                        "message \"Open a completed ChatGPT, Claude, or Gemini response and try again.\"'"
+                    )
+
+                root.after(0, show_copy_error)
+                return
+
+            prompt = apply_prompt_settings(
+                combined_responses_prompt(responses), healthcare_var, tech_stack_var, poc_var,
+                word_limit_var, word_count_var,
+            )
+            open_chatbots(prompt, enabled_bots, effort_var.get(), continue_var.get())
+        finally:
+            set_clipboard_text(original_clipboard)
+
+    t = threading.Thread(target=copy_and_launch)
+    t.start()
+
+    def wait_for_thread():
+        if t.is_alive():
+            root.after(500, wait_for_thread)
+        elif keep_open["value"]:
+            return
         else:
             root.destroy()
 
@@ -552,7 +751,6 @@ def main():
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2 - 80
     root.geometry(f"{w}x{h}+{x}+{y}")
-    root.attributes("-topmost", True)
     root.lift()
     root.focus_force()
 
@@ -603,6 +801,11 @@ def main():
         check_frame, width=SW_W, height=SW_H, bg=BG, highlightthickness=0, bd=0,
     )
     continue_switch.pack(side="left", padx=(6, 0))
+
+    synthesize_button = tk.Canvas(
+        check_frame, width=94, height=SW_H, bg=BG, highlightthickness=0, bd=0,
+    )
+    synthesize_button.pack(side="left", padx=(18, 0))
 
     # Effort selector: one global Low/Medium/High choice, translated per-site to a
     # model via EFFORT_MODELS before the prompt is sent (see select_model()).
@@ -660,17 +863,9 @@ def main():
         font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
     ).pack(side="left")
 
-    # Options, bottom row: less-used (markdown + tech stack + poc)
+    # Options, bottom row: less-used context.
     options_bottom_frame = tk.Frame(root, bg=BG)
     options_bottom_frame.pack(anchor="w", padx=20, pady=(6, 0))
-
-    markdown_var = tk.BooleanVar(value=state.get("markdown", False))
-    tk.Checkbutton(
-        options_bottom_frame, text="Markdown", variable=markdown_var,
-        font=("Georgia", 11, "italic"), bg=BG, fg=FG_DIM,
-        activebackground=BG, activeforeground=FG,
-        selectcolor=CB_BG, bd=0,
-    ).pack(side="left", padx=(0, 10))
 
     tech_stack_var = tk.BooleanVar(value=state.get("tech_stack", False))
     tk.Checkbutton(
@@ -749,6 +944,17 @@ def main():
             continue_switch.create_line(cx - 5, cy, cx + 5, cy, fill=ink, width=2,
                                         arrow="last", arrowshape=(4, 5, 2), capstyle="round")
 
+    def render_synthesize():
+        pal = THEMES[current_theme["name"]]
+        synthesize_button.delete("all")
+        synthesize_button.configure(bg=pal["BG"])
+        _pill(synthesize_button, 0, 0, 94, SW_H, pal["FG_DIM"])
+        _pill(synthesize_button, 1, 1, 93, SW_H - 1, pal["ENTRY_BG"])
+        synthesize_button.create_text(
+            47, SW_H / 2 + 1, text="Synthesize", fill=pal["FG"],
+            font=("Georgia", 10, "italic"),
+        )
+
     def toggle_continue(event=None):
         continue_var.set(not continue_var.get())
         render_continue()
@@ -764,6 +970,7 @@ def main():
         theme_var.set(new_name)
         render_switch()
         render_continue()  # canvas items aren't touched by apply_theme; redraw
+        render_synthesize()
         # Persist immediately so the choice survives closing without launching.
         s = load_state()
         s["theme"] = new_name
@@ -773,10 +980,22 @@ def main():
     continue_switch.bind("<Button-1>", toggle_continue)
     render_switch()
     render_continue()
+    render_synthesize()
 
     def _launch(e=None):
-        launch(entry.get("1.0", "end-1c"), checks, healthcare_var, markdown_var, tech_stack_var, poc_var, word_limit_var, word_count_var, continue_var, effort_var, theme_var, root)
+        launch(
+            entry.get("1.0", "end-1c"), checks, healthcare_var, tech_stack_var, poc_var,
+            word_limit_var, word_count_var, continue_var, effort_var, theme_var, root,
+        )
         return "break"
+
+    def _launch_combined_responses():
+        launch_combined_responses(
+            checks, healthcare_var, tech_stack_var, poc_var, word_limit_var, word_count_var,
+            continue_var, effort_var, theme_var, root,
+        )
+
+    synthesize_button.bind("<Button-1>", lambda event: _launch_combined_responses())
 
     # Bind Cmd+Return on root so it works regardless of which widget has focus
     root.bind_all("<Command-Return>", _launch)
