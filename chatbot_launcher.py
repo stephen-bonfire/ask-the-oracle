@@ -31,7 +31,7 @@ CHATBOTS = [
 # Gemini's picker lists Flash/Thinking/Pro with no submenu.
 EFFORT_MODELS = {
     "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Instant"},
-    "Claude":  {"high": "Opus 4.8",  "medium": "Sonnet 5",       "low": "Haiku 4.5"},
+    "Claude":  {"high": "Opus",      "medium": "Sonnet 5",       "low": "Haiku 4.5"},
     "Gemini":  {"high": "Pro",       "medium": "Thinking",       "low": "Flash"},
 }
 EFFORT_LEVELS = ["low", "medium", "high"]
