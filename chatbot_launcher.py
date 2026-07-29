@@ -562,8 +562,7 @@ def combined_responses_prompt(instruction, responses):
     instruction = instruction.strip()
     instruction_prefix = f"{instruction}\n\n" if instruction else ""
     return (
-        f"{instruction_prefix}Review these responses from three different chatbots. "
-        "Reconcile any differences and provide a unified, unbiased summary.\n\n"
+        f"{instruction_prefix}Here are the responses from three different chatbots:\n\n"
         f"{sections}"
     )
 
@@ -954,7 +953,7 @@ def main():
         _pill(synthesize_button, 0, 0, 94, SW_H, pal["FG_DIM"])
         _pill(synthesize_button, 1, 1, 93, SW_H - 1, pal["ENTRY_BG"])
         synthesize_button.create_text(
-            47, SW_H / 2 + 1, text="Synthesize", fill=pal["FG"],
+            47, SW_H / 2 + 1, text="Collect", fill=pal["FG"],
             font=("Georgia", 10, "italic"),
         )
 
