@@ -25,13 +25,12 @@ CHATBOTS = [
 ]
 
 # Effort level -> the exact label each site's in-page model picker shows for that
-# choice. Confirmed by driving each picker live (Chrome + osascript) rather than
-# guessed: ChatGPT's "Intelligence" pill exposes Instant/Medium/High directly;
-# Claude's picker needs its "More models" submenu opened for Opus/Sonnet;
-# Gemini's picker lists Flash/Thinking/Pro with no submenu.
+# choice. ChatGPT now nests Light/Medium/High under an Effort submenu in the
+# composer model picker; Claude needs "More models" for Opus/Sonnet; Gemini
+# lists Flash/Thinking/Pro with no submenu.
 EFFORT_MODELS = {
-    "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Instant"},
-    "Claude":  {"high": "Opus",      "medium": "Sonnet 5",       "low": "Haiku 4.5"},
+    "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Light"},
+    "Claude":  {"high": "Opus 5",    "medium": "Sonnet 5",       "low": "Haiku 4.5"},
     "Gemini":  {"high": "Pro",       "medium": "Thinking",       "low": "Flash"},
 }
 EFFORT_LEVELS = ["low", "medium", "high"]
@@ -158,14 +157,43 @@ def build_js(question, name, extra=None):
         re_literal = _MODEL_BUTTON_RE.get(bot, "/(?!)/")  # never matches if bot unknown
         return f"""
 (function() {{
+    function fire(el) {{
+        ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
+            el.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
+        }});
+    }}
+    if (`{bot}` === "ChatGPT") {{
+        var editor = document.querySelector("#prompt-textarea")
+                  || document.querySelector("div[contenteditable='true'].ProseMirror")
+                  || document.querySelector("textarea");
+        var form = editor && editor.closest("form");
+        var scoped = form && Array.from(form.querySelectorAll('button[aria-haspopup="menu"]')).find(function(x) {{
+            return x.textContent.trim().length > 0;
+        }});
+        if (scoped) {{ fire(scoped); return "opened"; }}
+    }}
+    if (`{bot}` === "Gemini") {{
+        var existingGeminiMenu = Array.from(document.querySelectorAll('[role=menuitem],[role=option]')).find(function(x) {{
+            return /Flash|Thinking|Pro/.test(x.textContent || "");
+        }});
+        if (existingGeminiMenu) {{ return "opened"; }}
+        var geminiEditor = document.querySelector("rich-textarea .ql-editor")
+                        || document.querySelector("div[role='textbox']");
+        var c = geminiEditor && geminiEditor.parentElement;
+        while (c && c !== document.body) {{
+            var mode = Array.from(c.querySelectorAll("button")).find(function(x) {{
+                return (x.getAttribute("aria-label") || "").includes("Open mode picker");
+            }});
+            if (mode) {{ mode.click(); return "opened"; }}
+            c = c.parentElement;
+        }}
+    }}
     var re = {re_literal};
     var b = Array.from(document.querySelectorAll('button[aria-haspopup]')).find(function(x) {{
         return re.test(x.textContent) && x.textContent.trim().length < 40;
     }});
     if (!b) {{ return "notfound"; }}
-    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
-        b.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
-    }});
+    fire(b);
     return "opened";
 }})();
 """
@@ -176,17 +204,48 @@ def build_js(question, name, extra=None):
         # behind a "More models" submenu — click that and let the caller retry.
         return f"""
 (function() {{
-    var items = Array.from(document.querySelectorAll('[role=menuitem],[role=menuitemradio],[role=option]'));
+    var items = Array.from(document.querySelectorAll('[role=menuitem],[role=menuitemradio],[role=menuitemcheckbox],[role=option]'));
     function fire(el) {{
         ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
             el.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
         }});
+        if (typeof el.click === "function") {{ el.click(); }}
     }}
-    var target = items.find(function(i) {{ return i.textContent.includes(`{label}`); }});
+    function text(el) {{ return el.textContent.trim().replace(/\\s+/g, " "); }}
+    var target = items.find(function(i) {{
+        var role = i.getAttribute("role");
+        return (role === "menuitem" || role === "menuitemradio" || role === "option") && text(i) === `{label}`;
+    }}) || items.find(function(i) {{
+        var role = i.getAttribute("role");
+        return (role === "menuitem" || role === "menuitemradio" || role === "option") && text(i).includes(`{label}`);
+    }}) || items.find(function(i) {{
+        return text(i) === `{label}`;
+    }});
     if (target) {{ fire(target); return "selected"; }}
+    var effort = items.find(function(i) {{ return text(i).includes("Effort"); }});
+    if (effort) {{ fire(effort); return "submenu"; }}
     var more = items.find(function(i) {{ return i.textContent.includes("More models"); }});
     if (more) {{ fire(more); return "submenu"; }}
     return "notfound";
+}})();
+"""
+
+    if name.endswith(":currentModel"):
+        bot = name.split(":")[0]
+        re_literal = _MODEL_BUTTON_RE.get(bot, "/(?!)/")  # never matches if bot unknown
+        return f"""
+(function() {{
+    if (`{bot}` === "Gemini") {{
+        var button = Array.from(document.querySelectorAll("button")).find(function(x) {{
+            return (x.getAttribute("aria-label") || "").includes("Open mode picker");
+        }});
+        return button ? button.textContent.trim().replace(/\\s+/g, " ") : "";
+    }}
+    var re = {re_literal};
+    var b = Array.from(document.querySelectorAll('button[aria-haspopup]')).find(function(x) {{
+        return re.test(x.textContent) && x.textContent.trim().length < 40;
+    }});
+    return b ? b.textContent.trim().replace(/\\s+/g, " ") : "";
 }})();
 """
 
@@ -210,8 +269,8 @@ def build_js(question, name, extra=None):
 """
 
     if name == "ChatGPT:send":
-        # Send in-page: dispatch a real Enter to the editor, then (if still unsent)
-        # click the explicit send button. No mic-clickable heuristic.
+        # Send in-page: click the real send button, polling while ChatGPT
+        # finishes any model-switch UI transition.
         return """
 (function() {
     var el = document.querySelector("#prompt-textarea")
@@ -220,6 +279,19 @@ def build_js(question, name, extra=None):
     if (!el) { return "editor not found"; }
     function txt() { return el.value || el.textContent || ""; }
     if (!txt().trim()) { return "composer empty, not sending"; }
+    function clickSend() {
+        // A model switch can leave stale composer controls in the document.
+        // Resolve the button from the active editor's form, not page-wide.
+        var form = el.closest("form");
+        var btn = form && (
+            form.querySelector('button[data-testid="send-button"]')
+            || form.querySelector('button[aria-label="Send prompt"]')
+            || form.querySelector('button[aria-label="Send message"]')
+        );
+        if (!(btn && !btn.disabled)) { return false; }
+        btn.click();
+        return true;
+    }
     el.focus();
     if (el.tagName === "TEXTAREA") {
         el.selectionStart = el.selectionEnd = el.value.length;
@@ -228,17 +300,15 @@ def build_js(question, name, extra=None):
         range.selectNodeContents(el); range.collapse(false);
         sel.removeAllRanges(); sel.addRange(range);
     }
-    ["keydown", "keypress", "keyup"].forEach(function(t) {
-        el.dispatchEvent(new KeyboardEvent(t, {key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true}));
-    });
-    setTimeout(function() {
-        if (!txt().trim()) { return; }  // already sent
-        var btn = document.querySelector('button[data-testid="send-button"]')
-               || document.querySelector('button[aria-label="Send prompt"]')
-               || document.querySelector('button[aria-label="Send message"]');
-        if (btn && !btn.disabled) { btn.click(); }
-    }, 150);
-    return "enter dispatched";
+    if (clickSend()) { return "send clicked"; }
+    var attempts = 0;
+    var timer = setInterval(function() {
+        attempts += 1;
+        if (!txt().trim() || clickSend() || attempts >= 12) {
+            clearInterval(timer);
+        }
+    }, 250);
+    return "send polling";
 })();
 """
 
@@ -314,6 +384,35 @@ def build_js(question, name, extra=None):
     }}, 600);
     return "ok: text inserted, send scheduled";
 }})();
+"""
+
+    if name == "Gemini:send":
+        return """
+(function() {
+    var el = document.querySelector("rich-textarea .ql-editor")
+          || document.querySelector("div[role='textbox']");
+    if (!el) { return "editor not found"; }
+    function txt() { return el.textContent || el.value || ""; }
+    if (!txt().trim()) { return "composer empty, not sending"; }
+    function clickSend() {
+        // Gemini renders the accessible label on the nested button only after
+        // text input enables the send control.
+        var btn = document.querySelector('div[data-test-id="send-button-container"] button')
+               || document.querySelector('button[aria-label="Send message"]');
+        if (!(btn && !btn.disabled)) { return false; }
+        btn.click();
+        return true;
+    }
+    if (clickSend()) { return "send clicked"; }
+    var attempts = 0;
+    var timer = setInterval(function() {
+        attempts += 1;
+        if (!txt().trim() || clickSend() || attempts >= 12) {
+            clearInterval(timer);
+        }
+    }, 250);
+    return "send polling";
+})();
 """
 
     if name.endswith(":locateCopyPreviousResponse"):
@@ -451,9 +550,10 @@ tell application "Google Chrome"
         end repeat
     end repeat
 end tell
-delay 0.3
+delay 0.5
 tell application "System Events"
-    keystroke return
+    -- `key code 36` is the physical Return key.
+    key code 36
 end tell
 """
     subprocess.run(["osascript", "-e", focus_and_enter], capture_output=True, text=True)
@@ -471,6 +571,11 @@ def select_model(bot, effort):
         return True
 
     domain = bot["domain"]
+    if bot["name"] == "Gemini":
+        current = inject_into_tab(domain, build_js("", f"{bot['name']}:currentModel"), log_result=False)
+        if label in current:
+            return True
+
     opened = inject_into_tab(domain, build_js("", f"{bot['name']}:openModel"))
     if opened != "opened":
         print(f"{domain}: model picker button not found")
@@ -486,7 +591,16 @@ def select_model(bot, effort):
         print(f"{domain}: could not select model \"{label}\"")
         return False
 
-    time.sleep(0.3)
+    if bot["name"] == "Gemini":
+        for _ in range(10):
+            time.sleep(0.25)
+            current = inject_into_tab(domain, build_js("", f"{bot['name']}:currentModel"), log_result=False)
+            if label in current:
+                return True
+        print(f"{domain}: selected \"{label}\" but current mode is \"{current}\"")
+        return False
+
+    time.sleep(0.8 if bot["name"] == "ChatGPT" and effort == "high" else 0.3)
     return True
 
 
@@ -627,15 +741,20 @@ def open_chatbots(question, enabled_bots, effort="medium", continue_conversation
                 inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:insert"), press_enter=False)
                 if model_ok:
                     time.sleep(0.5)
-                    # Send via JS click (mic-guarded); hardware Enter is a safe backup since the composer has text.
-                    inject_into_tab(bot["domain"], build_js(question, f"{bot['name']}:send"), press_enter=True)
+                    # ChatGPT's send routine already clicks/polls the send button; a later hardware Enter can submit a duplicate.
+                    inject_into_tab(
+                        bot["domain"], build_js(question, f"{bot['name']}:send"),
+                        press_enter=(bot["name"] == "Claude"),
+                    )
                 else:
                     print(f"{bot['domain']}: leaving prompt unsent (model selection failed)")
             else:
-                # Gemini: its JS normally inserts + clicks send in one step; if the model
-                # couldn't be set, insert only and leave it for the user to send.
+                # Gemini enables its send button asynchronously, so insert first and
+                # let its in-page send routine poll and click the actual control.
                 if model_ok:
-                    inject_into_tab(bot["domain"], build_js(question, bot["name"]), press_enter=True)
+                    inject_into_tab(bot["domain"], build_js(question, "Gemini:insertOnly"), press_enter=False)
+                    time.sleep(0.5)
+                    inject_into_tab(bot["domain"], build_js(question, "Gemini:send"), press_enter=False)
                 else:
                     inject_into_tab(bot["domain"], build_js(question, "Gemini:insertOnly"), press_enter=False)
                     print(f"{bot['domain']}: leaving prompt unsent (model selection failed)")
