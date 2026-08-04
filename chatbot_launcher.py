@@ -303,14 +303,20 @@ def build_js(question, name, extra=None):
         range.selectNodeContents(el); range.collapse(false);
         sel.removeAllRanges(); sel.addRange(range);
     }
-    if (clickSend()) { return "send clicked"; }
     var attempts = 0;
-    var timer = setInterval(function() {
+    function attemptSend() {
         attempts += 1;
-        if (!txt().trim() || clickSend() || attempts >= 12) {
+        if (!txt().trim() || attempts > 4) {
             clearInterval(timer);
+            return;
         }
-    }, 250);
+        clickSend();
+    }
+    // A fresh ChatGPT composer can rehydrate immediately after a model change.
+    // Keep trying only while the prompt remains, so a successful send is never
+    // duplicated.
+    var timer = setInterval(attemptSend, 750);
+    attemptSend();
     return "send polling";
 })();
 """
@@ -753,7 +759,9 @@ def open_chatbots(question, enabled_bots, effort="medium", continue_conversation
 
         for bot in enabled_bots:
             is_reuse = bot["name"] in reuse_names
-            wait = round(bot["wait"] * 0.6, 1) if is_reuse else bot["wait"]
+            # A continued conversation can reuse its ready composer, but navigating
+            # an existing tab to a fresh chat needs the full site load time.
+            wait = round(bot["wait"] * 0.6, 1) if is_reuse and continue_conversation else bot["wait"]
             print(f"Waiting {wait}s for {bot['domain']} ({'existing' if is_reuse else 'new'} tab)...")
             time.sleep(wait)
             model_ok = select_model(bot, effort)
