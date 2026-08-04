@@ -202,6 +202,7 @@ def build_js(question, name, extra=None):
         # Generic across all three sites: click the menu item whose text contains
         # the target label. If not present at this level, Claude's models hide
         # behind a "More models" submenu — click that and let the caller retry.
+        bot = name.split(":")[0]
         return f"""
 (function() {{
     var items = Array.from(document.querySelectorAll('[role=menuitem],[role=menuitemradio],[role=menuitemcheckbox],[role=option]'));
@@ -209,6 +210,8 @@ def build_js(question, name, extra=None):
         ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function(t) {{
             el.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}}));
         }});
+        // Gemini and Claude's nested pickers require a native click to commit
+        // the selection or open a submenu.
         if (typeof el.click === "function") {{ el.click(); }}
     }}
     function text(el) {{ return el.textContent.trim().replace(/\\s+/g, " "); }}
@@ -222,10 +225,10 @@ def build_js(question, name, extra=None):
         return text(i) === `{label}`;
     }});
     if (target) {{ fire(target); return "selected"; }}
-    var effort = items.find(function(i) {{ return text(i).includes("Effort"); }});
-    if (effort) {{ fire(effort); return "submenu"; }}
     var more = items.find(function(i) {{ return i.textContent.includes("More models"); }});
-    if (more) {{ fire(more); return "submenu"; }}
+    if (more) {{ more.click(); return "submenu"; }}
+    var effort = `{bot}` === "ChatGPT" && items.find(function(i) {{ return text(i).includes("Effort"); }});
+    if (effort) {{ effort.click(); return "submenu"; }}
     return "notfound";
 }})();
 """
@@ -415,6 +418,16 @@ def build_js(question, name, extra=None):
 })();
 """
 
+    if name == "Claude:closeModel":
+        return """
+(function() {
+    var openMenu = Array.from(document.querySelectorAll('[role="menu"]')).find(function(menu) {
+        return !menu.hasAttribute("data-closed");
+    });
+    return openMenu ? "ready to close" : "already closed";
+})();
+"""
+
     if name.endswith(":locateCopyPreviousResponse"):
         # These are the response-level copy controls observed in the live sites.
         # Selecting the final matching control skips code-block copy buttons.
@@ -503,7 +516,7 @@ def open_url_in_chrome(url):
     script = f'tell application "Google Chrome" to open location "{url}"'
     subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
 
-def inject_into_tab(domain, js_code, press_enter=False, log_result=True):
+def inject_into_tab(domain, js_code, press_enter=False, log_result=True, key_code=None):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
         f.write(js_code)
         js_path = f.name
@@ -531,10 +544,11 @@ end tell
     if log_result:
         print(f"{domain}: {result}")
 
-    # Step 2 (optional): focus the tab and press Enter via a real keystroke.
-    # Only do this when explicitly asked — pressing Enter on the *insert* step would
-    # send the message prematurely, leaving the send step to misfire on an empty composer.
-    if not press_enter:
+    # Step 2 (optional): focus the tab and send a trusted macOS keypress.
+    # Enter is explicitly opt-in so inserting text never sends prematurely.
+    if press_enter:
+        key_code = 36
+    if key_code is None:
         return result
 
     focus_and_enter = f"""
@@ -552,8 +566,7 @@ tell application "Google Chrome"
 end tell
 delay 0.5
 tell application "System Events"
-    -- `key code 36` is the physical Return key.
-    key code 36
+    key code {key_code}
 end tell
 """
     subprocess.run(["osascript", "-e", focus_and_enter], capture_output=True, text=True)
@@ -590,6 +603,14 @@ def select_model(bot, effort):
     if result != "selected":
         print(f"{domain}: could not select model \"{label}\"")
         return False
+
+    if bot["name"] == "Claude":
+        # Claude completes the selection after its click handler returns. A real
+        # Escape after that transition dismisses the visual picker reliably.
+        time.sleep(0.35)
+        inject_into_tab(
+            domain, build_js("", "Claude:closeModel"), log_result=False, key_code=53,
+        )
 
     if bot["name"] == "Gemini":
         for _ in range(10):
