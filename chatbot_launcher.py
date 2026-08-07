@@ -29,7 +29,7 @@ CHATBOTS = [
 # composer model picker; Claude needs "More models" for Opus/Sonnet; Gemini
 # lists Flash/Thinking/Pro with no submenu.
 EFFORT_MODELS = {
-    "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Light"},
+    "ChatGPT": {"high": "High",      "medium": "Medium",        "low": "Instant"},
     "Claude":  {"high": "Opus 5",    "medium": "Sonnet 5",       "low": "Haiku 4.5"},
     "Gemini":  {"high": "Pro",       "medium": "Thinking",       "low": "Flash"},
 }
@@ -250,6 +250,63 @@ def build_js(question, name, extra=None):
     }});
     return b ? b.textContent.trim().replace(/\\s+/g, " ") : "";
 }})();
+"""
+
+    if name == "ChatGPT:focusModel":
+        return """
+(function() {
+    var editor = document.querySelector("#prompt-textarea");
+    var form = editor && editor.closest("form");
+    var button = form && Array.from(form.querySelectorAll('button[aria-haspopup="menu"]')).find(function(el) {
+        return el.textContent.trim().length > 0;
+    });
+    if (!button) { return "notfound"; }
+    button.focus();
+    return document.activeElement === button ? "focused" : "notfocused";
+})();
+"""
+
+    if name == "ChatGPT:menuState":
+        return """
+(function() {
+    var labels = Array.from(document.querySelectorAll('[role="menuitem"]')).map(function(el) {
+        return (el.getAttribute("aria-label") || el.textContent || "").trim().replace(/\\s+/g, " ");
+    });
+    if (labels.includes("Show advanced options")) { return "collapsed"; }
+    if (labels.includes("Show compact options")) { return "expanded"; }
+    return "closed";
+})();
+"""
+
+    if name == "ChatGPT:effortOptions":
+        return """
+(function() {
+    var known = ["Instant", "Light", "Low", "Medium", "Standard", "High", "Extra High", "Pro"];
+    return Array.from(document.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="option"]'))
+        .map(function(el) { return (el.textContent || "").trim().replace(/\\s+/g, " "); })
+        .filter(function(text) { return known.includes(text); })
+        .join("|");
+})();
+"""
+
+    if name == "ChatGPT:currentEffort":
+        return """
+(function() {
+    var editor = document.querySelector("#prompt-textarea");
+    var form = editor && editor.closest("form");
+    var button = form && Array.from(form.querySelectorAll('button[aria-haspopup="menu"]')).find(function(el) {
+        return el.textContent.trim().length > 0;
+    });
+    return button ? button.textContent.trim().replace(/\\s+/g, " ") : "";
+})();
+"""
+
+    if name == "ChatGPT:activeText":
+        return """
+(function() {
+    var el = document.activeElement;
+    return el ? (el.getAttribute("aria-label") || el.textContent || "").trim().replace(/\\s+/g, " ") : "";
+})();
 """
 
     if name == "ChatGPT:insert":
@@ -561,9 +618,11 @@ end tell
 tell application "Google Chrome"
     activate
     repeat with w in windows
+        set tabIndex to 0
         repeat with t in tabs of w
+            set tabIndex to tabIndex + 1
             if URL of t contains "{domain}" then
-                set active tab index of w to (index of t)
+                set active tab index of w to tabIndex
                 set index of w to 1
                 exit repeat
             end if
@@ -578,6 +637,72 @@ end tell
     subprocess.run(["osascript", "-e", focus_and_enter], capture_output=True, text=True)
     return result
 
+
+def select_chatgpt_effort(domain, effort):
+    """Select ChatGPT effort through focused controls and trusted key events."""
+    aliases = {
+        "low": ["Instant", "Light", "Low"],
+        "medium": ["Medium", "Standard"],
+        "high": ["High"],
+    }
+    candidates = aliases.get(effort, [EFFORT_MODELS["ChatGPT"].get(effort, effort)])
+
+    inject_into_tab(domain, '"close picker"', log_result=False, key_code=53)
+    focused = inject_into_tab(
+        domain, build_js("", "ChatGPT:focusModel"), log_result=False, key_code=36,
+    )
+    if focused != "focused":
+        print(f"{domain}: model picker button not found")
+        return False
+
+    time.sleep(0.35)
+    state = inject_into_tab(domain, build_js("", "ChatGPT:menuState"), log_result=False)
+    if state == "closed":
+        print(f"{domain}: model picker did not open")
+        return False
+
+    # ChatGPT currently hides Model and Effort behind an Advanced toggle.
+    if state == "collapsed":
+        inject_into_tab(domain, '"last item"', log_result=False, key_code=119)  # End
+        inject_into_tab(domain, '"expand"', log_result=False, key_code=36)     # Return
+        time.sleep(0.25)
+
+    inject_into_tab(domain, '"last item"', log_result=False, key_code=119)      # Effort
+    active = inject_into_tab(domain, build_js("", "ChatGPT:activeText"), log_result=False)
+    if not active.startswith("Effort"):
+        inject_into_tab(domain, '"close picker"', log_result=False, key_code=53)
+        print(f'{domain}: expected Effort menu item but focused "{active}"')
+        return False
+
+    inject_into_tab(domain, '"open submenu"', log_result=False, key_code=124)  # Right
+    time.sleep(0.25)
+
+    option_text = inject_into_tab(domain, build_js("", "ChatGPT:effortOptions"), log_result=False)
+    if not option_text:
+        inject_into_tab(domain, '"open submenu"', log_result=False, key_code=36)  # Return
+        time.sleep(0.25)
+        option_text = inject_into_tab(domain, build_js("", "ChatGPT:effortOptions"), log_result=False)
+    options = [value for value in option_text.split("|") if value]
+    target = next((candidate for candidate in candidates if candidate in options), None)
+    if not target:
+        inject_into_tab(domain, '"close picker"', log_result=False, key_code=53)
+        print(f"{domain}: effort options changed ({option_text or 'none found'})")
+        return False
+
+    inject_into_tab(domain, '"first option"', log_result=False, key_code=115)  # Home
+    for _ in range(options.index(target)):
+        inject_into_tab(domain, '"next option"', log_result=False, key_code=125)  # Down
+    inject_into_tab(domain, '"select option"', log_result=False, key_code=36)
+
+    for _ in range(8):
+        time.sleep(0.25)
+        current = inject_into_tab(domain, build_js("", "ChatGPT:currentEffort"), log_result=False)
+        if target in current:
+            return True
+    print(f'{domain}: selected "{target}" but current effort is "{current}"')
+    return False
+
+
 def select_model(bot, effort):
     """Open the site's model picker and click the item mapped to `effort`.
 
@@ -590,6 +715,9 @@ def select_model(bot, effort):
         return True
 
     domain = bot["domain"]
+    if bot["name"] == "ChatGPT":
+        return select_chatgpt_effort(domain, effort)
+
     if bot["name"] == "Gemini":
         current = inject_into_tab(domain, build_js("", f"{bot['name']}:currentModel"), log_result=False)
         if label in current:
@@ -654,6 +782,8 @@ tell application "Google Chrome"
                 set windowBounds to bounds of w
                 set screenX to (item 1 of windowBounds) + {x}
                 set screenY to (item 4 of windowBounds) - {viewport_height} + {y}
+                set screenX to screenX as integer
+                set screenY to screenY as integer
                 delay 0.2
                 tell application "System Events" to click at {{screenX, screenY}}
                 return
